@@ -1,0 +1,31 @@
+Jihan Portal - PM2 24/7 Setup
+
+1) Install dependencies:
+   npm install
+
+2) Install PM2 globally:
+   npm install -g pm2
+
+3) Start the portal:
+   pm2 start ecosystem.config.js
+
+4) Save the PM2 process list:
+   pm2 save
+
+5) Make PM2 start automatically after Windows/Linux reboot:
+   pm2 startup
+
+   Run the command PM2 prints, then:
+   pm2 save
+
+Useful commands:
+   pm2 status
+   pm2 logs jihan-portal
+   pm2 restart jihan-portal
+   pm2 stop jihan-portal
+   pm2 delete jihan-portal
+
+Important:
+- PM2 keeps the Node.js process running and automatically restarts it if it crashes.
+- A computer/server must remain powered on and connected to the internet for the site to stay online.
+- This package does not include Cloudflare/Cloudflared.
