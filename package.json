@@ -2,9 +2,9 @@
   "name": "jihan-academic-portal",
   "version": "1.0.0",
   "private": true,
-  "main": "Jihan_node_fixed.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node Jihan_node_fixed.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^5.1.0",
