@@ -1,15 +1,13 @@
 module.exports = {
   apps: [{
-    name: "jihan-portal",
-    script: "./server.js",
+    name: 'jihan-portal',
+    script: './server.js',
+    cwd: __dirname,
     instances: 1,
-    exec_mode: "fork",
+    exec_mode: 'fork',
     autorestart: true,
     watch: false,
-    max_memory_restart: "500M",
-    env: {
-      NODE_ENV: "production",
-      PORT: 8787
-    }
+    max_memory_restart: '300M',
+    env: { NODE_ENV: 'production', PORT: 8787 }
   }]
 };
