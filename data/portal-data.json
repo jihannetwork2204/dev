@@ -1,0 +1,259 @@
+{
+  "students_list": [
+    {
+      "id": "8020100",
+      "pass": "8020100",
+      "roll": "",
+      "name": "1",
+      "class": "Class 6",
+      "room": "Room 1",
+      "student_no": "8020100",
+      "photo": "",
+      "shift": "Day",
+      "gender": ""
+    },
+    {
+      "id": "205081",
+      "pass": "205081",
+      "roll": "02",
+      "name": "Ismam",
+      "class": "Class 6",
+      "room": "Room 7",
+      "student_no": "8020100",
+      "photo": ""
+    }
+  ],
+  "teachers_list": [
+    {
+      "id": "Jihan",
+      "pass": "jihan",
+      "name": "jihan",
+      "phone": "3453453535",
+      "subject": "SCIENCE",
+      "subjects": [
+        "SCIENCE"
+      ]
+    },
+    {
+      "id": "206090",
+      "pass": "206090",
+      "name": "AB Siddiq",
+      "phone": "01521444634",
+      "subjects": [
+        "Bangla-I",
+        "Bangla-II"
+      ],
+      "subject": "Bangla-I, Bangla-II"
+    }
+  ],
+  "subjects_list": [
+    {
+      "sl": "1",
+      "name": "Bangla-I",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "2",
+      "name": "Bangla-II",
+      "teacher": "AB Siddiq\n01521444634"
+    },
+    {
+      "sl": "3",
+      "name": "English-I",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "4",
+      "name": "English-II",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "5",
+      "name": "Mathematics",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "6",
+      "name": "ICT",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "7",
+      "name": "Islam and Moral Education",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "8",
+      "name": "Bangladesh and Global Studies",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "9",
+      "name": "SCIENCE",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "10",
+      "name": "Fine Arts & Crafts",
+      "teacher": "TBA"
+    }
+  ],
+  "notice_board": [
+    {
+      "id": 2,
+      "text": "নিয়মিত ক্লাস উপস্থিতি এবং শৃঙ্খলা বজায় রাখার সংক্রান্ত নির্দেশাবলি।"
+    },
+    {
+      "id": 3,
+      "text": "সহ-পাঠ্যক্রম কার্যক্রম এবং সাংস্কৃতিক প্রতিযোগিতার জন্য নিবন্ধন শুরু হয়েছে।"
+    },
+    {
+      "id": 4,
+      "text": "আগামীকাল তোমাদের কোচিং নিয়মিত রুটিন অনুযায়ী চলবে"
+    }
+  ],
+  "exam_state": {
+    "tutorial1": {
+      "active": false,
+      "startedAt": "2026-08-27T01:41:29.182Z",
+      "published": false,
+      "publishedAt": null
+    },
+    "half_yearly": {
+      "active": false,
+      "startedAt": null,
+      "published": false,
+      "publishedAt": null
+    },
+    "tutorial2": {
+      "active": true,
+      "startedAt": "2026-08-27T02:07:42.061Z",
+      "published": true,
+      "publishedAt": "2026-08-28T14:55:38.599Z"
+    },
+    "final": {
+      "active": false,
+      "startedAt": "2026-08-22T10:37:00.164Z",
+      "published": false,
+      "publishedAt": null
+    }
+  },
+  "active_exam_id": "tutorial2",
+  "marks_db": {
+    "tutorial1": {
+      "Room 8": {
+        "SCIENCE": {
+          "1": {
+            "written": 100,
+            "mcq": 50,
+            "total": 150,
+            "grade": "A+"
+          },
+          "2": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "3": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "4": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "5": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "6": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "7": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "8": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "9": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "10": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          }
+        }
+      },
+      "Room 1": {
+        "SCIENCE": {
+          "": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          }
+        }
+      }
+    },
+    "tutorial2": {
+      "Room 1": {
+        "SCIENCE": {
+          "": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          }
+        },
+        "Bangla-I": {},
+        "Bangla-II": {}
+      },
+      "Room 7": {
+        "Bangla-I": {}
+      }
+    }
+  },
+  "portal_settings": {
+    "school_name": "দেব'স সেন্টার",
+    "tagline": "একটি বাস্তবমুখী ছায়া শিক্ষা প্রতিষ্ঠান",
+    "logo_type": "image",
+    "logo_text": "দেব'স সেন্টার ",
+    "logo_url": "root/dev/public/school-logo.png",
+    "bg_color": "#FAF6F0",
+    "header_color": "#ffffff",
+    "accent_color": "#007bff",
+    "ai_prompt": "তুমি একজন বন্ধুভাবাপন্ন বাংলা এআই সহকারী (AI Assistant), যে একদম মানুষের মতো সাবলীল বাংলায় কথা বলতে পারো। জিয়াননেটওয়ার্ক (JihanNetwork) পোর্টালে আসা ব্যবহারকারীদের সব প্রশ্নের উত্তর বাংলায় সুন্দর করে বুঝিয়ে দেবে।",
+    "home_title": "দেব'স সেন্টারে আপনাকে স্বাগতম",
+    "home_description": "একটি বাস্তবমুখী ছায়া শিক্ষা প্রতিষ্ঠান",
+    "home_feature_title": "একাডেমিক বৈশিষ্ট্য:",
+    "home_feature_1": "৫ম থেকে ৮ম শ্রেণী পর্যন্ত ভর্তির সুবিধা",
+    "home_feature_2": "পরীক্ষায় ভালো করতে দেব'স সেন্টারেই বেস্ট ",
+    "home_feature_3": "মানসম্মত পড়ালেখার নির্ভরযোগ্য প্রতিষ্ঠান ",
+    "contact_address": "অভিযান # ১৪, কাজল ভিলা, সফিউদ্দিন রোড, টঙ্গী, গাজীপুর",
+    "contact_office": "01680-987196",
+    "contact_whatsapp": "01977-230226"
+  },
+  "tuition_fees": [],
+  "uploaded_sheets": []
+}
