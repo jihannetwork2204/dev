@@ -1,5 +1,5 @@
 // ==========================================
-// Dev Center Software by Dev.Center (Node.js)
+// Dev Center Software by dec.center (Node.js)
 // Complete Academic, Portal & Mark Management System
 // ==========================================
 
@@ -7,11 +7,12 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
-// Optional .env support. If dotenv is not installed, environment variables still work.
-try { require('dotenv').config(); } catch (_) {}
 
 const app = express();
 const PORT = process.env.PORT || 8787;
+
+// Public files: logo and other existing assets
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Middleware for parsing form data and managing sessions
 app.use(express.urlencoded({ extended: true }));
@@ -29,7 +30,133 @@ const ADMIN_PASS = "dev";
 let students_list = [];
 let teachers_list = [];
 
-let subjects_list = [
+// Tuition fee management
+let tuition_fees = [];
+
+// Teacher uploaded subject sheets (PDF). PDF files are stored in public/sheets.
+let uploaded_sheets = [];
+const SHEETS_DIR = path.join(__dirname, 'public', 'sheets');
+if (!fs.existsSync(SHEETS_DIR)) fs.mkdirSync(SHEETS_DIR, { recursive: true });
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Small dependency-free multipart/form-data parser used only for teacher PDF uploads.
+// It keeps the existing express.urlencoded/json middleware and does not require multer.
+function parseTeacherSheetUpload(req, res, next) {
+    const contentType = String(req.headers['content-type'] || '');
+    const boundaryMatch = contentType.match(/boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i);
+    const boundary = boundaryMatch ? (boundaryMatch[1] || boundaryMatch[2]) : '';
+
+    if (!contentType.toLowerCase().startsWith('multipart/form-data') || !boundary) {
+        return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Upload form is invalid. Please refresh the page and try again.'));
+    }
+
+    const MAX_BYTES = 21 * 1024 * 1024;
+    const chunks = [];
+    let total = 0;
+    let tooLarge = false;
+
+    req.on('data', chunk => {
+        total += chunk.length;
+        if (total <= MAX_BYTES) chunks.push(chunk);
+        else tooLarge = true;
+    });
+
+    req.on('end', () => {
+        if (tooLarge || total > MAX_BYTES) {
+            return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('PDF is too large. Maximum file size is 20 MB.'));
+        }
+
+        try {
+            const raw = Buffer.concat(chunks);
+            const marker = Buffer.from('--' + boundary);
+            const fields = {};
+            let file = null;
+            let searchFrom = 0;
+
+            // Parse each multipart section without decoding the PDF bytes as text.
+            while (true) {
+                const boundaryPos = raw.indexOf(marker, searchFrom);
+                if (boundaryPos === -1) break;
+
+                let partStart = boundaryPos + marker.length;
+                if (raw.slice(partStart, partStart + 2).toString('ascii') === '--') break;
+                if (raw.slice(partStart, partStart + 2).toString('ascii') === '\r\n') partStart += 2;
+
+                const headerEnd = raw.indexOf(Buffer.from('\r\n\r\n'), partStart);
+                if (headerEnd === -1) break;
+
+                const nextBoundary = raw.indexOf(Buffer.from('\r\n--' + boundary), headerEnd + 4);
+                if (nextBoundary === -1) break;
+
+                const headers = raw.slice(partStart, headerEnd).toString('utf8');
+                const data = raw.slice(headerEnd + 4, nextBoundary);
+                const dispositionLineMatch = headers.match(/(?:^|\r\n)Content-Disposition:\s*([^\r\n]+)/i);
+
+                if (dispositionLineMatch) {
+                    const disposition = dispositionLineMatch[1];
+                    const nameMatch = disposition.match(/(?:^|;)\s*name\s*=\s*"([^"]*)"/i) || disposition.match(/(?:^|;)\s*name\s*=\s*([^;\s]+)/i);
+                    const filenameMatch = disposition.match(/(?:^|;)\s*filename\s*=\s*"([^"]*)"/i) || disposition.match(/(?:^|;)\s*filename\s*=\s*([^;\s]+)/i);
+                    const typeMatch = headers.match(/(?:^|\r\n)Content-Type:\s*([^\r\n]+)/i);
+
+                    if (nameMatch) {
+                        const fieldName = nameMatch[1];
+                        if (filenameMatch) {
+                            const originalname = filenameMatch[1].replace(/^.*[\\/]/, '');
+                            file = {
+                                fieldName,
+                                originalname,
+                                mimetype: typeMatch ? typeMatch[1].trim().toLowerCase() : '',
+                                buffer: data
+                            };
+                        } else {
+                            fields[fieldName] = data.toString('utf8');
+                        }
+                    }
+                }
+
+                searchFrom = nextBoundary + 2;
+            }
+
+            req.body = fields;
+            req.teacherSheetFile = file;
+            next();
+        } catch (err) {
+            console.error('[Sheet Upload] multipart parse error:', err.message);
+            return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Could not read the uploaded PDF. Please try again.'));
+        }
+    });
+
+    req.on('error', err => {
+        console.error('[Sheet Upload] request error:', err.message);
+        if (!res.headersSent) {
+            res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Upload failed. Please try again.'));
+        }
+    });
+}
+
+function feeNumber(value) {
+    const n = parseFloat(value);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function feeDue(fee) {
+    return Math.max(0, feeNumber(fee.payable) - feeNumber(fee.paid) - feeNumber(fee.scholarship));
+}
+
+function studentFees(studentId) {
+    return tuition_fees.filter(f => f.student_id === studentId);
+}
+
+
+const DEFAULT_SUBJECTS = [
     {sl: "1", name: "Bangla-I", teacher: "TBA"},
     {sl: "2", name: "Bangla-II", teacher: "TBA"},
     {sl: "3", name: "English-I", teacher: "TBA"},
@@ -41,6 +168,8 @@ let subjects_list = [
     {sl: "9", name: "SCIENCE", teacher: "TBA"},
     {sl: "10", name: "Fine Arts & Crafts", teacher: "TBA"}
 ];
+
+let subjects_list = DEFAULT_SUBJECTS.map(sub => ({ ...sub }));
 
 // Notice Board Database
 let notice_board = [
@@ -71,6 +200,13 @@ function getExam(examId) {
 function getActiveExam() {
     return active_exam_id ? getExam(active_exam_id) : null;
 }
+
+// Normalize the active exam after loading persisted state.
+if (!active_exam_id || !getExam(active_exam_id) || !(exam_state[active_exam_id] && exam_state[active_exam_id].active)) {
+    const activeExam = EXAMS.find(e => exam_state[e.id] && exam_state[e.id].active);
+    active_exam_id = activeExam ? activeExam.id : null;
+}
+
 function getExamMarks(examId, room, subject) {
     if (!examId) return {};
     if (!marks_db[examId]) marks_db[examId] = {};
@@ -82,6 +218,23 @@ function examTitle(examId) {
     const exam = getExam(examId);
     return exam ? exam.title : 'Examination';
 }
+// Teacher subject helpers: supports old single-subject accounts and new multi-subject accounts.
+function getTeacherSubjects(teacher) {
+    if (!teacher) return [];
+    if (Array.isArray(teacher.subjects)) {
+        return teacher.subjects.map(s => String(s || '').trim()).filter(Boolean);
+    }
+    const legacy = String(teacher.subject == null ? '' : teacher.subject).trim();
+    return legacy ? [legacy] : [];
+}
+
+function normalizeTeacherSubjects(teacher) {
+    const subjects = getTeacherSubjects(teacher).filter((s, i, arr) => arr.indexOf(s) === i).slice(0, 3);
+    teacher.subjects = subjects;
+    teacher.subject = subjects.join(', ');
+    return subjects;
+}
+
 function formatExamDate(dateValue) {
     if (!dateValue) return '—';
     return new Date(dateValue).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -92,7 +245,7 @@ let portal_settings = {
     tagline: "Software by NIGHT CLOUD",
     logo_type: "text", 
     logo_text: "DC",
-    logo_url: "",
+    logo_url: "/logo.png",
     bg_color: "#FAF6F0",       
     header_color: "#ffffff",   
     accent_color: "#007bff",   
@@ -105,69 +258,145 @@ let portal_settings = {
     home_feature_3: "Admin panel to dynamically manage subjects, teachers, and student details."
 };
 
-// Persistent local storage: keeps students, teachers, subjects, notices,
-// exam state, marks, and portal settings after Node.js restarts.
-const DATA_FILE = path.join(__dirname, 'data', 'portal-data.json');
 
-function savePersistentData() {
+// ============================================================
+// SINGLE SOURCE OF TRUTH: portal-data.json
+// All persistent portal data is loaded from and saved to this
+// one JSON file. No separate data JSON is used.
+// ============================================================
+const DATA_DIR = path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'portal-data.json');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+function readPortalData() {
     try {
-        const dir = path.dirname(DATA_FILE);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        const data = {
-            students_list,
-            teachers_list,
-            subjects_list,
-            notice_board,
-            exam_state,
-            active_exam_id,
-            marks_db,
-            portal_settings
-        };
-        const tempFile = DATA_FILE + '.tmp';
-        fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf8');
-        fs.renameSync(tempFile, DATA_FILE);
-    } catch (err) {
-        console.error('[Storage Error] Could not save portal data:', err.message);
+        if (!fs.existsSync(DATA_FILE)) return null;
+        const raw = fs.readFileSync(DATA_FILE, 'utf8').trim();
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch (e) {
+        console.log('[Storage] portal-data.json read error:', e.message);
+        return null;
     }
 }
 
-function loadPersistentData() {
+function savePortalData() {
+    const payload = {
+        students_list,
+        teachers_list,
+        subjects_list,
+        notice_board,
+        exam_state,
+        active_exam_id,
+        marks_db,
+        portal_settings,
+        tuition_fees,
+        uploaded_sheets
+    };
     try {
-        if (!fs.existsSync(DATA_FILE)) return;
-        const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-        if (Array.isArray(data.students_list)) students_list = data.students_list;
-        if (Array.isArray(data.teachers_list)) teachers_list = data.teachers_list;
-        if (Array.isArray(data.subjects_list)) subjects_list = data.subjects_list;
-        if (Array.isArray(data.notice_board)) notice_board = data.notice_board;
-        if (data.exam_state && typeof data.exam_state === 'object') {
-            EXAMS.forEach(exam => {
-                if (data.exam_state[exam.id]) {
-                    exam_state[exam.id] = { ...exam_state[exam.id], ...data.exam_state[exam.id] };
-                }
-            });
-        }
-        if (typeof data.active_exam_id === 'string' || data.active_exam_id === null) {
-            active_exam_id = data.active_exam_id;
-        }
-        if (data.marks_db && typeof data.marks_db === 'object') marks_db = data.marks_db;
-        if (data.portal_settings && typeof data.portal_settings === 'object') {
-            portal_settings = { ...portal_settings, ...data.portal_settings };
-        }
-        console.log('[Storage] Saved portal data loaded successfully.');
-    } catch (err) {
-        console.error('[Storage Error] Could not load saved data:', err.message);
+        const tmp = DATA_FILE + '.tmp';
+        fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8');
+        fs.renameSync(tmp, DATA_FILE);
+        return true;
+    } catch (e) {
+        console.log('[Storage] portal-data.json write error:', e.message);
+        return false;
     }
 }
 
-loadPersistentData();
-
-// Save every POST mutation after the response is finished.
-app.use((req, res, next) => {
-    if (req.method === 'POST') {
-        res.on('finish', () => savePersistentData());
+const savedPortalData = readPortalData();
+if (savedPortalData) {
+    if (Array.isArray(savedPortalData.students_list)) students_list = savedPortalData.students_list;
+    if (Array.isArray(savedPortalData.teachers_list)) teachers_list = savedPortalData.teachers_list;
+    if (Array.isArray(savedPortalData.subjects_list)) subjects_list = savedPortalData.subjects_list;
+    if (Array.isArray(savedPortalData.notice_board)) notice_board = savedPortalData.notice_board;
+    if (savedPortalData.exam_state && typeof savedPortalData.exam_state === 'object') {
+        exam_state = savedPortalData.exam_state;
+        EXAMS.forEach(exam => {
+            if (!exam_state[exam.id]) {
+                exam_state[exam.id] = { active:false, startedAt:null, published:false, publishedAt:null };
+            }
+        });
     }
-    next();
-});
+    if (Object.prototype.hasOwnProperty.call(savedPortalData, 'active_exam_id')) {
+        active_exam_id = savedPortalData.active_exam_id;
+    }
+    if (savedPortalData.marks_db && typeof savedPortalData.marks_db === 'object') {
+        marks_db = savedPortalData.marks_db;
+    }
+    if (savedPortalData.portal_settings && typeof savedPortalData.portal_settings === 'object') {
+        portal_settings = { ...portal_settings, ...savedPortalData.portal_settings };
+    }
+    if (portal_settings.logo_type === 'image' && !portal_settings.logo_url) {
+        portal_settings.logo_url = '/logo.png';
+    }
+    if (Array.isArray(savedPortalData.tuition_fees)) {
+        tuition_fees = savedPortalData.tuition_fees;
+    }
+    if (Array.isArray(savedPortalData.uploaded_sheets)) {
+        uploaded_sheets = savedPortalData.uploaded_sheets;
+    }
+}
+
+// Migrate old teacher records that used teacher.subject into teacher.subjects.
+if (Array.isArray(teachers_list)) {
+    teachers_list.forEach(normalizeTeacherSubjects);
+}
+
+// Keep Bangla-I present everywhere subjects_list is used, including
+// Existing Subjects & Teachers List, student results, and printable result PDF.
+// Older portal-data.json files may have been saved without this subject.
+(function ensureBanglaI() {
+    if (!Array.isArray(subjects_list)) subjects_list = [];
+
+    const normalized = [];
+    let banglaI = null;
+
+    subjects_list.forEach(sub => {
+        if (!sub || !sub.name) return;
+        const name = String(sub.name).trim();
+        if (!name) return;
+
+        if (name.toLowerCase() === 'bangla-i') {
+            if (!banglaI) {
+                banglaI = {
+                    sl: "1",
+                    name: "Bangla-I",
+                    teacher: sub.teacher || "TBA"
+                };
+            }
+            return;
+        }
+
+        if (!normalized.some(existing => String(existing.name).trim().toLowerCase() === name.toLowerCase())) {
+            normalized.push({ ...sub, name });
+        }
+    });
+
+    if (!banglaI) banglaI = { ...DEFAULT_SUBJECTS[0] };
+
+    subjects_list = [banglaI, ...normalized].map((sub, index) => ({
+        ...sub,
+        sl: String(index + 1)
+    }));
+})();
+
+// If old tuition_fees.json exists and the single JSON has no fee records yet,
+// migrate it once into portal-data.json. After migration, portal-data.json is
+// the only file used for tuition data.
+try {
+    const oldFeesFile = path.join(__dirname, 'tuition_fees.json');
+    if ((!savedPortalData || !Array.isArray(savedPortalData.tuition_fees)) && fs.existsSync(oldFeesFile)) {
+        const oldFees = JSON.parse(fs.readFileSync(oldFeesFile, 'utf8'));
+        if (Array.isArray(oldFees)) tuition_fees = oldFees;
+    }
+} catch (e) {
+    console.log('[Storage] Old tuition fee migration skipped:', e.message);
+}
+
+// Make sure the current in-memory state is reflected in the single JSON file.
+teachers_list.forEach(normalizeTeacherSubjects);
+savePortalData();
 
 const PRESET_THEMES = {
     light_cream: { name: "Light Cream (Default)", bg_color: "#FAF6F0", header_color: "#ffffff", accent_color: "#007bff" },
@@ -257,7 +486,38 @@ const HTML_HEADER = `
         .site-footer { text-align: center; padding: 20px; color: #111111; font-size: 13px; border-top: 1px solid #dddddd; margin-top: 40px; background: __HEADER_COLOR__; }
         .site-footer a { color: #111111; text-decoration: none; font-weight: bold; }
         .site-footer a:hover { text-decoration: underline; }
-        @media(max-width: 768px) { .student-dashboard-wrapper { flex-direction: column; } .sidebar-menu { width: 100%; } .feature-grid { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } }
+        /* Mobile UI enhancement only: no content, routes, forms or data removed. */
+        @keyframes dcFadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes dcFloat { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-3px); } }
+        html { scroll-behavior:smooth; }
+        body { min-height:100vh; overflow-x:hidden; -webkit-font-smoothing:antialiased; }
+        .top-header { box-shadow:0 5px 18px rgba(0,0,0,.08); }
+        .card,.profile-content-area,.login-box-custom { animation:dcFadeUp .42s ease both; }
+        .header-btn,.login-btn,.sidebar-item,.feature-box { transition:transform .22s ease,box-shadow .22s ease,background-color .22s ease; }
+        .header-btn:hover,.login-btn:hover { transform:translateY(-2px); box-shadow:0 7px 18px rgba(0,0,0,.14); }
+        .feature-box:hover { transform:translateY(-3px); box-shadow:0 8px 20px rgba(0,0,0,.08); }
+        .feature-icon { transition:transform .25s ease; }
+        .feature-box:hover .feature-icon { transform:scale(1.08) rotate(3deg); }
+        input:focus,select:focus,textarea:focus { outline:none; border-color:__ACCENT_COLOR__ !important; box-shadow:0 0 0 3px rgba(0,123,255,.10); }
+        @media(max-width:768px){
+          .top-header{position:relative;padding:12px 14px;gap:10px;align-items:center}
+          .logo-area{gap:10px;min-width:0}.logo-circle{width:48px;height:48px;min-width:48px;font-size:16px}
+          .title-text{min-width:0}.title-text h1{font-size:17px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.title-text h2{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          .top-header>div:last-child{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.header-btn{padding:8px 10px;font-size:11px;border-radius:9px}
+          .navbar{justify-content:flex-start;overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none}.navbar::-webkit-scrollbar{display:none}.navbar a{flex:0 0 auto;padding:11px 14px;font-size:12px;white-space:nowrap}.nav-item{flex:0 0 auto}
+          .dropdown-content{position:fixed;left:10px;right:10px;min-width:0;max-height:65vh;overflow-y:auto;border-radius:12px;box-shadow:0 16px 35px rgba(0,0,0,.18)}
+          .main-container{width:100%;box-sizing:border-box;margin:16px auto;padding:0 10px}.student-dashboard-wrapper{flex-direction:column;gap:12px}.sidebar-menu{width:100%;display:flex;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;border-radius:12px;position:sticky;top:8px;z-index:50;box-shadow:0 7px 18px rgba(0,0,0,.12)}.sidebar-menu::-webkit-scrollbar{display:none}.sidebar-item{flex:0 0 auto;min-height:42px;padding:11px 13px;font-size:12px;white-space:nowrap}
+          .profile-content-area{width:100%;box-sizing:border-box;border-radius:13px}.student-id-banner,.student-name-banner{padding:11px 9px;font-size:14px}.class-section-row{font-size:12px}.class-col,.section-col{padding:8px 5px}.student-photo-container{padding:16px 0}.student-avatar{width:88px;height:88px;border-width:3px;font-size:32px}
+          .feature-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.feature-box{padding:17px 7px;min-height:92px}.feature-icon{width:40px;height:40px;font-size:16px}.feature-title{font-size:11px;line-height:1.3}
+          .card{padding:16px;border-radius:13px}.card h3{font-size:17px}.notice-header{border-radius:10px 10px 0 0;padding:10px 12px}.notice-body{max-height:280px;border-radius:0 0 10px 10px}
+          .student-page-wrapper,.admin-page-wrapper{padding:24px 10px;min-height:calc(100vh - 150px);box-sizing:border-box}.login-box-custom{max-width:100%;border-radius:15px}.card-top-header{padding:13px 14px;gap:10px}.login-logo-circle{width:42px;height:42px;min-width:42px}.tab-title{padding:12px 14px;font-size:12px}.form-content{padding:17px 14px}.form-content select,.form-content input[type=text],.form-content input[type=password]{min-height:46px;padding:11px 12px;border-radius:10px;font-size:16px}.login-btn{width:100%;min-height:46px;border-radius:10px}.btn-container{display:block}
+          .dashboard-grid{grid-template-columns:1fr;gap:13px}.dash-input{min-height:44px;font-size:16px;border-radius:9px}.dash-table{min-width:650px;font-size:12px}.dash-table th,.dash-table td{padding:8px}
+          .main-container[style*="grid-template-columns"]{display:block!important}.main-container[style*="grid-template-columns"]>*{margin-bottom:14px}
+          form[style*="display: flex"]{flex-direction:column!important;align-items:stretch!important;gap:9px!important}form[style*="display: flex"]>div{width:100%!important;flex-grow:1!important}
+          .site-footer{margin-top:22px;padding:15px 10px;font-size:11px;line-height:1.5}
+        }
+        @media(max-width:420px){.main-container{padding:0 8px}.card{padding:13px}.feature-box{min-height:86px}}
+        @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
     </style>
 </head>
 <body>
@@ -292,22 +552,23 @@ const HTML_HEADER = `
                 <a href="/login?type=admin">Admin Login</a>
             </div>
         </div>
-        <a href="/">Contact</a>
+        <a href="/contact">Contact</a>
         __ADMIN_NAV_LINK__
     </div>
 `;
 
 const HTML_FOOTER = `
     <div class="site-footer">
-        <span>&copy; 2026 <a href="https://www.nbd.dpdns.org/" target="_blank" rel="noopener noreferrer" style="font-weight:700;">Dev.Center</a> | Software by <strong>NIGHT CLOUD</strong></span>
+        <span>&copy; 2026 <a href="https://www.devscenter2017.com/" target="_blank" rel="noopener noreferrer">Dev.Center</a> | Software by <a href="https://www.nbd.dpdns.org/" target="_blank" rel="noopener noreferrer">NIGHT CLOUD</a></span>
     </div>
+<script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('form').forEach(function(f){f.addEventListener('submit',function(){var b=f.querySelector('button[type="submit"]');if(b&&!b.disabled){b.style.opacity='.78';b.style.transform='scale(.99)';}});});});</script>
 </body>
 </html>
 `;
 
 function renderTemplate(contentBody, req) {
-    let logoContent = portal_settings.logo_type === 'image' && portal_settings.logo_url 
-        ? `<img src="${portal_settings.logo_url}" alt="Logo">` 
+    let logoContent = portal_settings.logo_type === 'image'
+        ? `<img src="${portal_settings.logo_url || '/logo.png'}" alt="Logo" onerror="this.onerror=null;this.src='/logo.png';">`
         : portal_settings.logo_text;
 
     let rightButtons = '';
@@ -325,7 +586,8 @@ function renderTemplate(contentBody, req) {
         rightButtons = `<a href="/login?type=student" class="header-btn">Login</a>`;
     }
 
-    let subLinks = subjects_list.map(sub => `<a href="/student_portal?tab=subjects">${sub.name}</a>`).join('');
+    // Public subject links: students/visitors can open subject sheets without logging in.
+    let subLinks = subjects_list.map(sub => `<a href="/subject-sheets?subject=${encodeURIComponent(sub.name)}">${escapeHtml(sub.name)}</a>`).join('');
     let adminNavLink = (req.session && req.session.admin_logged) ? `<a href="/dashboard" style="color: #111111; font-weight: bold;">Dashboard</a>` : '';
 
     let html = HTML_HEADER
@@ -377,6 +639,90 @@ app.get('/', (req, res) => {
             </div>
         </div>
     </div>`;
+
+    // Public subject section on the home page. No login is required to open a subject sheet.
+    const publicSubjectCards = subjects_list.length ? subjects_list.map((sub, i) => {
+        const count = uploaded_sheets.filter(x => String(x.subject || '').trim().toLowerCase() === String(sub.name || '').trim().toLowerCase()).length;
+        return `<a href="/subject-sheets?subject=${encodeURIComponent(sub.name)}" style="text-decoration:none;color:inherit;">
+            <div style="border:1px solid #ddd;border-radius:9px;padding:15px;background:#fff;transition:.15s;">
+                <div style="font-size:12px;color:#777;">Subject ${i + 1}</div>
+                <div style="font-size:17px;font-weight:bold;color:#00796b;margin-top:4px;">${escapeHtml(sub.name)}</div>
+                <div style="font-size:12px;color:#666;margin-top:6px;">${count ? count + ' sheet' + (count === 1 ? '' : 's') + ' available' : 'No sheet yet'}</div>
+                <div style="margin-top:10px;color:#00796b;font-size:12px;font-weight:bold;">📄 View Subject Sheets →</div>
+            </div>
+        </a>`;
+    }).join('') : '<div style="color:#777;">No subjects have been added yet.</div>';
+
+    body += `<div class="main-container" style="margin-top:0;"><div class="card">
+        <h3 style="color:#00796b;margin-bottom:6px;">📚 Subjects & Subject Sheets</h3>
+        <p style="color:#555;margin-top:0;">Student login is not required. Click any subject to view its available sheets and PDF files.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;">${publicSubjectCards}</div>
+    </div></div>`;
+    res.send(renderTemplate(body, req));
+});
+
+// Public Subject Sheet page — no student login required.
+// Clicking a subject from the home page or Subjects menu opens that subject's own sheet page.
+app.get('/subject-sheets', (req, res) => {
+    const requestedSubject = String(req.query.subject || '').trim();
+    if (!requestedSubject) {
+        const subjectCards = subjects_list.length ? subjects_list.map((sub, i) => {
+            const count = uploaded_sheets.filter(x => String(x.subject || '').trim().toLowerCase() === String(sub.name || '').trim().toLowerCase()).length;
+            return `<a href="/subject-sheets?subject=${encodeURIComponent(sub.name)}" style="text-decoration:none;color:inherit;">
+                <div class="card" style="padding:18px;margin-bottom:12px;cursor:pointer;">
+                    <div style="font-size:12px;color:#777;">Subject ${i + 1}</div>
+                    <div style="font-size:18px;font-weight:bold;color:#00796b;margin-top:4px;">${escapeHtml(sub.name)}</div>
+                    <div style="font-size:13px;color:#666;margin-top:6px;">${count} sheet${count === 1 ? '' : 's'} available • Click to view</div>
+                </div>
+            </a>`;
+        }).join('') : '<div class="card">No subjects have been added yet.</div>';
+        return res.send(renderTemplate(`<div class="main-container" style="max-width:900px;"><div class="card"><h3 style="color:#00796b;">📚 Subjects & Sheets</h3><p style="color:#555;">Select a subject to view its uploaded sheets.</p>${subjectCards}</div></div>`, req));
+    }
+
+    const subjectRecord = subjects_list.find(sub => String(sub.name || '').trim().toLowerCase() === requestedSubject.toLowerCase());
+    if (!subjectRecord) {
+        return res.status(404).send(renderTemplate(`<div class="main-container" style="max-width:800px;"><div class="card"><h3 style="color:#c62828;">Subject not found</h3><p>This subject is not available.</p><a href="/" class="header-btn" style="display:inline-block;background:#00796b;">← Back to Home</a></div></div>`, req));
+    }
+
+    const subjectSheets = uploaded_sheets.filter(sheet => String(sheet.subject || '').trim().toLowerCase() === String(subjectRecord.name || '').trim().toLowerCase());
+    const sheetRows = subjectSheets.length ? subjectSheets.map((sheet, index) => {
+        const pdfUrl = '/sheets/' + encodeURIComponent(sheet.filename);
+        return `<div style="background:#f7f9fa;border:1px solid #ddd;border-radius:8px;padding:18px;margin-bottom:12px;">
+            <div style="font-size:16px;font-weight:bold;color:#111;">${index + 1}. ${escapeHtml(sheet.name)}</div>
+            <div style="font-size:13px;color:#666;margin-top:5px;">Uploaded by: ${escapeHtml(sheet.teacher_name || 'Teacher')}</div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+                <a href="${pdfUrl}" target="_blank" rel="noopener noreferrer" class="header-btn" style="display:inline-block;background:#00796b;">📄 View PDF</a>
+                <a href="${pdfUrl}" download class="header-btn" style="display:inline-block;background:#2e7d32;">⬇ Download PDF</a>
+            </div>
+        </div>`;
+    }).join('') : '<div style="text-align:center;padding:35px;color:#777;background:#f7f7f7;border:1px solid #ddd;border-radius:8px;">No sheet has been uploaded for this subject yet.</div>';
+
+    const body = `<div class="main-container" style="max-width:1000px;"><div class="card" style="padding:25px;">
+        <div style="background:#00796b;color:#fff;border-radius:8px;padding:18px 20px;margin-bottom:20px;">
+            <div style="font-size:12px;opacity:.9;">SUBJECT</div>
+            <div style="font-size:24px;font-weight:bold;margin-top:3px;">${escapeHtml(subjectRecord.name)}</div>
+            <div style="font-size:13px;margin-top:7px;opacity:.95;">Assigned Teacher: ${escapeHtml(subjectRecord.teacher || 'TBA')}</div>
+        </div>
+        <h3 style="margin:0 0 14px;color:#00796b;">📄 ${escapeHtml(subjectRecord.name)} Sheets</h3>
+        ${sheetRows}
+        <div style="margin-top:20px;"><a href="/" class="header-btn" style="display:inline-block;background:#555;">← Back to Home</a></div>
+    </div></div>`;
+    res.send(renderTemplate(body, req));
+});
+
+// Contact page — added without changing any existing admin or portal tools.
+app.get('/contact', (req, res) => {
+    const body = `
+    <div class="main-container" style="max-width:800px;">
+        <div class="card">
+            <h3>যোগাযোগ</h3>
+            <div style="font-size:15px; line-height:1.9; color:#333;">
+                <p><strong>ঠিকানা:</strong><br>অভিযান # ১৪, কাজল ভিলা, সফিউদ্দিন রোড, টঙ্গী, গাজীপুর</p>
+                <p><strong>অফিস:</strong><br><a href="tel:+8801680987196" style="color:${portal_settings.accent_color}; font-weight:bold;">01680-987196</a></p>
+                <p><strong>WhatsApp:</strong><br><a href="https://wa.me/8801977230226" target="_blank" rel="noopener noreferrer" style="color:${portal_settings.accent_color}; font-weight:bold;">01977-230226</a></p>
+            </div>
+        </div>
+    </div>`;
     res.send(renderTemplate(body, req));
 });
 
@@ -384,8 +730,8 @@ app.get('/login', (req, res) => {
     let loginType = req.query.type || 'student';
     let msg = req.query.msg || '';
 
-    let logoContent = portal_settings.logo_type === 'image' && portal_settings.logo_url 
-        ? `<img src="${portal_settings.logo_url}" alt="Logo">` 
+    let logoContent = portal_settings.logo_type === 'image'
+        ? `<img src="${portal_settings.logo_url || '/logo.png'}" alt="Logo" onerror="this.onerror=null;this.src='/logo.png';">`
         : portal_settings.logo_text;
 
     let body = '';
@@ -400,7 +746,7 @@ app.get('/login', (req, res) => {
                     <div class="login-logo-circle">${logoContent}</div>
                     <div class="school-title">
                         <h1>${portal_settings.school_name}</h1>
-                        <h2>PORTAL LOGIN (CLASS 1 - 10)</h2>
+                        <h2>PORTAL LOGIN (CLASS 5 - 8)</h2>
                     </div>
                 </div>
                 <div class="tab-title"><span>👤</span> STUDENT / PARENT'S LOGIN</div>
@@ -513,26 +859,38 @@ app.post('/login', (req, res) => {
     let msg = '';
 
     if (loginType === 'admin') {
-        if (username === ADMIN_USER && password === ADMIN_PASS) {
+        if (String(username || '').trim() === ADMIN_USER && String(password || '').trim() === ADMIN_PASS) {
             req.session.admin_logged = true;
-            return res.redirect('/dashboard');
+            return req.session.save(() => res.redirect('/dashboard'));
         } else {
             msg = 'Invalid Username or Password!';
         }
     } else if (loginType === 'teacher') {
-        let teacherFound = teachers_list.find(t => t.id === username && t.pass === password);
+        let loginTeacherId = String(username || '').trim();
+        let loginTeacherPass = String(password || '').trim();
+        let teacherFound = teachers_list.find(t => String(t.id == null ? '' : t.id).trim() === loginTeacherId && String(t.pass == null ? '' : t.pass).trim() === loginTeacherPass);
         if (teacherFound) {
             req.session.teacher_logged = teacherFound.id;
-            return res.redirect('/teacher_portal');
+            return req.session.save(() => res.redirect('/teacher_portal'));
         } else {
             msg = 'Incorrect Teacher ID or Password!';
         }
     } else {
-        let studentFound = students_list.find(s => (s.id === username || s.student_no === username) && s.pass === password);
+        const loginUser = String(username || '').trim();
+        const loginPass = String(password || '').trim();
+        const loginRoom = String(room || '').trim().toLowerCase();
+        let studentFound = students_list.find(s => {
+            const sid = String(s.id == null ? '' : s.id).trim();
+            const sno = String(s.student_no == null ? '' : s.student_no).trim();
+            const spass = String(s.pass == null ? '' : s.pass).trim();
+            return (sid === loginUser || sno === loginUser) && spass === loginPass;
+        });
         if (studentFound) {
-            if (studentFound.room === room) {
-                req.session.student_logged = studentFound.id;
-                return res.redirect('/student_portal');
+            const studentRoom = String(studentFound.room == null ? '' : studentFound.room).trim().toLowerCase();
+            // Existing accounts without a room remain usable; otherwise compare case-insensitively.
+            if (!studentRoom || !loginRoom || studentRoom === loginRoom) {
+                req.session.student_logged = String(studentFound.id);
+                return req.session.save(() => res.redirect('/student_portal'));
             } else {
                 msg = `Incorrect Room! This student belongs to ${studentFound.room}.`;
             }
@@ -553,10 +911,63 @@ app.get('/teacher_portal', (req, res) => {
     let msg = req.query.msg || '';
     let body = '';
 
-    if (subTab === 'upload_marks') {
+    if (subTab === 'upload_sheet') {
+        const teacherSubjects = normalizeTeacherSubjects(teacher);
+        const selectedSubject = teacherSubjects.includes(String(req.query.subject || '').trim()) ? String(req.query.subject).trim() : (teacherSubjects[0] || '');
+        const teacherSheets = uploaded_sheets.filter(x => String(x.teacher_id) === String(teacher.id));
+        const subjectOptions = teacherSubjects.length ? teacherSubjects.map(s => `<option value="${escapeHtml(s)}" ${selectedSubject === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('') : '<option value="">-- No Subject Assigned --</option>';
+        const uploadedRows = teacherSheets.length ? teacherSheets.map((sheet, i) => `<tr><td style="text-align:center;">${i+1}</td><td><b>${escapeHtml(sheet.name)}</b></td><td>${escapeHtml(sheet.subject)}</td><td>${escapeHtml(sheet.uploaded_at ? new Date(sheet.uploaded_at).toLocaleString() : '')}</td><td style="text-align:center;white-space:nowrap;"><a href="/teacher_portal/sheets/view?id=${encodeURIComponent(sheet.id)}" class="header-btn" style="display:inline-block;padding:7px 12px;background:#00796b;margin-right:5px;">View Sheet</a><form method="POST" action="/teacher_portal/delete_sheet" style="display:inline;" onsubmit="return confirm('Delete this sheet? This cannot be undone.');"><input type="hidden" name="sheet_id" value="${escapeHtml(sheet.id)}"><button type="submit" class="del-btn" style="border:none;cursor:pointer;padding:7px 12px;">🗑 Delete</button></form></td></tr>`).join('') : '<tr><td colspan="5" style="text-align:center;padding:25px;color:#777;">No sheets uploaded yet.</td></tr>';
+        body = `
+        <div class="main-container" style="max-width:1100px;">
+            <div class="student-dashboard-wrapper">
+                <div class="sidebar-menu" style="background-color:#00796b;">
+                    <a href="/teacher_portal" class="sidebar-item">👨‍🏫 Teacher Dashboard</a>
+                    <a href="/teacher_portal?subtab=upload_marks" class="sidebar-item">📝 Upload Marks / Results</a>
+                    <a href="/teacher_portal?subtab=upload_sheet" class="sidebar-item" style="background:rgba(0,0,0,0.1);font-weight:bold;">📄 Upload Subject Sheet</a>
+                    <a href="#" class="sidebar-item">📋 Attendance Sheet</a>
+                    <a href="#" class="sidebar-item">📢 Notice Board</a>
+                </div>
+                <div class="profile-content-area">
+                    <div class="student-id-banner" style="background-color:#00796b;">Upload Subject Sheet / PDF</div>
+                    <div style="padding:25px;">
+                        ${msg ? `<div style="background:#d4edda;color:#155724;padding:10px;border-radius:4px;margin-bottom:15px;font-weight:bold;">${escapeHtml(msg)}</div>` : ''}
+                        <div style="background:#f4f4f4;border:1px solid #e5e5e5;padding:18px;border-radius:7px;max-width:760px;">
+                            <form method="POST" action="/teacher_portal/upload_sheet" enctype="multipart/form-data">
+                                <label style="display:block;margin-bottom:6px;font-size:12px;font-weight:bold;">Sheet Name:</label>
+                                <input type="text" name="sheet_name" class="dash-input" placeholder="e.g. Bangla-I Suggestion Sheet" required>
+                                <label style="display:block;margin-bottom:6px;font-size:12px;font-weight:bold;">Select Subject:</label>
+                                <select name="subject" class="dash-input" required>${subjectOptions}</select>
+                                <label style="display:block;margin-bottom:6px;font-size:12px;font-weight:bold;">Upload PDF:</label>
+                                <input type="file" name="sheet_pdf" accept="application/pdf,.pdf" required style="width:100%;padding:10px;background:#fff;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;margin-bottom:8px;">
+                                <div style="font-size:12px;color:#777;margin-bottom:15px;">PDF only. Maximum file size: 20 MB.</div>
+                                <button type="submit" class="header-btn" style="cursor:pointer;border:none;background:#00796b;">Upload &amp; Submit</button>
+                            </form>
+                        </div>
+                        <div style="margin-top:28px;">
+                            <h3 style="color:#00796b;margin-top:0;">My Uploaded Sheets</h3>
+                            <div style="overflow-x:auto;"><table class="dash-table"><tr><th>SI</th><th>Sheet Name</th><th>Subject</th><th>Uploaded</th><th>Action</th></tr>${uploadedRows}</table></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    } else if (subTab === 'upload_marks') {
+        let selectedClass = req.query.class || '';
         let selectedRoom = req.query.room || 'Room 1';
-        let selectedSubject = req.query.subject || teacher.subject;
+        let teacherSubjects = normalizeTeacherSubjects(teacher);
+        let requestedSubject = String(req.query.subject || '').trim();
+        let selectedSubject = teacherSubjects.length > 1
+            ? (teacherSubjects.includes(requestedSubject) ? requestedSubject : teacherSubjects[0])
+            : (teacherSubjects[0] || '');
+        let selectedShift = req.query.shift || '';
         let activeExam = getActiveExam();
+
+        let classOptions = '';
+        for (let i = 1; i <= 10; i++) {
+            const cName = `Class ${i}`;
+            classOptions += `<option value="${cName}" ${selectedClass === cName ? 'selected' : ''}>${cName}</option>`;
+        }
+
         
         let roomOptions = '';
         for(let i=1; i<=10; i++) {
@@ -566,7 +977,11 @@ app.get('/teacher_portal', (req, res) => {
 
         // Get students sorted by roll number for the selected room
         let roomStudents = students_list
-            .filter(s => s.room === selectedRoom)
+            .filter(s =>
+                (!selectedClass || String(s.class || '') === String(selectedClass)) &&
+                (!selectedRoom || String(s.room || '') === String(selectedRoom)) &&
+                (!selectedShift || String(s.shift || 'Day') === String(selectedShift))
+            )
             .sort((a, b) => parseInt(a.roll) - parseInt(b.roll));
 
         let studentMarkRows = '';
@@ -606,12 +1021,33 @@ app.get('/teacher_portal', (req, res) => {
                         <form method="GET" action="/teacher_portal" style="display: flex; gap: 15px; align-items: flex-end; margin-bottom: 25px; background: rgba(0,0,0,0.03); padding: 15px; border-radius: 6px;">
                             <input type="hidden" name="subtab" value="upload_marks">
                             <div style="flex-grow: 1;">
-                                <label style="display:block; margin-bottom:5px; font-size:12px; font-weight:bold;">Select Room:</label>
-                                <select name="room" class="dash-input" style="margin-bottom:0;" onchange="this.form.submit()">${roomOptions}</select>
+                                <div style="flex-grow:1;">
+                            <label style="display:block;margin-bottom:5px;font-size:12px;font-weight:bold;">Select Class:</label>
+                            <select name="class" class="dash-input" onchange="this.form.submit()">
+                                <option value="">All Classes</option>
+                                ${classOptions}
+                            </select>
+                        </div>
+                        <label style="display:block; margin-bottom:5px; font-size:12px; font-weight:bold;">Select Room:</label>
+                                <select name="room" class="dash-input" style="margin-bottom:0;" onchange="this.form.submit()">${roomOptions}</select><div style="flex-grow:1;">
+                            <label style="display:block;margin-bottom:5px;font-size:12px;font-weight:bold;">Select Shift:</label>
+                            <select name="shift" class="dash-input" onchange="this.form.submit()">
+                                <option value="">All Shifts</option>
+                                <option value="Day" ${selectedShift === 'Day' ? 'selected' : ''}>Day</option>
+                                <option value="Morning" ${selectedShift === 'Morning' ? 'selected' : ''}>Morning</option>
+                            </select>
+                        </div>
+                        
                             </div>
                             <div style="flex-grow: 1;">
+                                ${teacherSubjects.length > 1 ? `
                                 <label style="display:block; margin-bottom:5px; font-size:12px; font-weight:bold;">Select Subject:</label>
-                                <input type="text" name="subject" class="dash-input" value="${selectedSubject}" readonly style="margin-bottom:0; background:#eee;">
+                                <select name="subject" class="dash-input" style="margin-bottom:0;" onchange="this.form.submit()">
+                                    ${teacherSubjects.map(s => `<option value="${s}" ${selectedSubject === s ? 'selected' : ''}>${s}</option>`).join('')}
+                                </select>` : `
+                                <label style="display:block; margin-bottom:5px; font-size:12px; font-weight:bold;">Subject:</label>
+                                <input type="text" class="dash-input" value="${selectedSubject || 'No Subject Assigned'}" readonly style="margin-bottom:0; background:#eee;">
+                                <input type="hidden" name="subject" value="${selectedSubject}">`}
                             </div>
                         </form>
 
@@ -643,13 +1079,14 @@ app.get('/teacher_portal', (req, res) => {
                 <div class="sidebar-menu" style="background-color: #00796b;">
                     <a href="/teacher_portal" class="sidebar-item" style="background: rgba(0,0,0,0.1); font-weight: bold;">👨‍🏫 Teacher Dashboard</a>
                     <a href="/teacher_portal?subtab=upload_marks" class="sidebar-item">📝 Upload Marks / Results</a>
+                    <a href="/teacher_portal?subtab=upload_sheet" class="sidebar-item">📄 Upload Subject Sheet</a>
                     <a href="#" class="sidebar-item">📋 Attendance Sheet</a>
                     <a href="#" class="sidebar-item">📢 Notice Board</a>
                 </div>
                 <div class="profile-content-area">
                     <div class="student-id-banner" style="background-color: #00796b;">Teacher Portal ID # ${teacher.id}</div>
                     <div class="class-section-row">
-                        <div class="class-col" style="background-color: #00897b;">Subject: ${teacher.subject}</div>
+                        <div class="class-col" style="background-color: #00897b;">Subject: ${getTeacherSubjects(teacher).join(', ') || 'No Subject Assigned'}</div>
                         <div class="section-col" style="background: #00695c;">Phone: ${teacher.phone}</div>
                     </div>
                     <div class="student-photo-container">
@@ -659,9 +1096,12 @@ app.get('/teacher_portal', (req, res) => {
                     <div style="padding: 25px; color: #111111;">
                         <h3 style="color: #00796b; margin-top:0;">Welcome, Professor ${teacher.name}!</h3>
                         <p style="font-size: 14px; line-height: 1.6;">
-                            You are successfully logged into the official ${portal_settings.school_name} Teacher Management Portal. From here you can check your assigned subject (<strong>${teacher.subject}</strong>), select rooms, and upload student marks sequentially by roll number.
+                            You are successfully logged into the official ${portal_settings.school_name} Teacher Management Portal. From here you can check your assigned subject${getTeacherSubjects(teacher).length > 1 ? 's' : ''} (<strong>${getTeacherSubjects(teacher).join(', ') || 'None'}</strong>), select rooms, and upload student marks sequentially by roll number.
                         </p>
-                        <a href="/teacher_portal?subtab=upload_marks" class="header-btn" style="background-color: #00796b; margin-top: 15px; display:inline-block;">Go to Mark Upload Panel &raquo;</a>
+                        <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap;">
+                            <a href="/teacher_portal?subtab=upload_marks" class="header-btn" style="background-color:#00796b;display:inline-block;">Go to Mark Upload Panel &raquo;</a>
+                            <a href="/teacher_portal?subtab=upload_sheet" class="header-btn" style="background-color:#00897b;display:inline-block;">Upload Subject Sheet / PDF &raquo;</a>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -672,15 +1112,27 @@ app.get('/teacher_portal', (req, res) => {
 
 app.post('/teacher_portal/save_marks', (req, res) => {
     if (!req.session.teacher_logged) return res.redirect('/login?type=teacher');
-    let { room, subject, exam_id } = req.body;
+    let { room, subject, exam_id, class: selectedClass, shift: selectedShift } = req.body;
     let activeExam = getActiveExam();
+    const teacher = teachers_list.find(t => t.id === req.session.teacher_logged);
+    const teacherSubjects = normalizeTeacherSubjects(teacher);
+    subject = String(subject || '').trim();
+
+    if (!teacher || !subject || !teacherSubjects.includes(subject)) {
+        return res.redirect('/teacher_portal?subtab=upload_marks&msg=' + encodeURIComponent('You can only upload marks for your assigned subject(s).'));
+    }
+
     if (!activeExam || exam_id !== activeExam.id) {
         return res.redirect('/teacher_portal?subtab=upload_marks&msg=' + encodeURIComponent('No active exam. Admin must start an exam before marks can be uploaded.'));
     }
 
     let subjectMarks = getExamMarks(activeExam.id, room, subject);
 
-    let roomStudents = students_list.filter(s => s.room === room);
+    let roomStudents = students_list.filter(s =>
+        String(s.room || '') === String(room || '') &&
+        (!selectedClass || String(s.class || '') === String(selectedClass)) &&
+        (!selectedShift || String(s.shift || 'Day') === String(selectedShift))
+    );
     roomStudents.forEach(st => {
         let written = parseFloat(req.body[`marks_${st.roll}_written`]) || 0;
         let mcq = parseFloat(req.body[`marks_${st.roll}_mcq`]) || 0;
@@ -696,7 +1148,217 @@ app.post('/teacher_portal/save_marks', (req, res) => {
         subjectMarks[st.roll] = { written, mcq, total, grade };
     });
 
-    res.redirect(`/teacher_portal?subtab=upload_marks&room=${encodeURIComponent(room)}&subject=${encodeURIComponent(subject)}&msg=${encodeURIComponent('Marks successfully uploaded and saved for ' + room + '!')}`);
+    savePortalData();
+    res.redirect(`/teacher_portal?subtab=upload_marks&class=${encodeURIComponent(selectedClass || '')}&room=${encodeURIComponent(room)}&shift=${encodeURIComponent(selectedShift || '')}&subject=${encodeURIComponent(subject)}&msg=${encodeURIComponent('Marks successfully uploaded and saved for ' + room + '!')}`);
+});
+
+// Teacher Subject Sheet / PDF Upload
+app.get('/teacher_portal/sheets/view', (req, res) => {
+    if (!req.session.teacher_logged && !req.session.student_logged) return res.redirect('/login?type=student');
+    const id = String(req.query.id || '').trim();
+    const sheet = uploaded_sheets.find(x => x.id === id);
+    if (!sheet) return res.status(404).send(renderTemplate('<div class="main-container"><div class="card"><h3>Sheet not found</h3><p>The requested sheet is no longer available.</p></div></div>', req));
+
+    const isTeacher = !!req.session.teacher_logged;
+    if (isTeacher) {
+        const teacher = teachers_list.find(t => t.id === req.session.teacher_logged);
+        if (!teacher || !getTeacherSubjects(teacher).includes(sheet.subject)) {
+            return res.status(403).send(renderTemplate('<div class="main-container"><div class="card"><h3>Access denied</h3><p>You are not assigned to this subject.</p></div></div>', req));
+        }
+    }
+
+    const pdfUrl = '/sheets/' + encodeURIComponent(sheet.filename);
+    const body = `
+    <div class="main-container" style="max-width:1000px;">
+        <div class="card" style="padding:0;overflow:hidden;">
+            <div style="background:#00796b;color:#fff;padding:14px 18px;font-weight:bold;font-size:17px;">📄 Subject Sheet</div>
+            <div style="padding:22px;">
+                <div style="background:#f4f6f9;border:1px solid #ddd;border-radius:8px;padding:16px;margin-bottom:18px;">
+                    <div style="font-size:18px;font-weight:bold;color:#111;margin-bottom:8px;">${escapeHtml(sheet.name)}</div>
+                    <div style="font-size:13px;color:#555;"><b>Subject:</b> ${escapeHtml(sheet.subject)}</div>
+                    <div style="font-size:13px;color:#555;margin-top:4px;"><b>Uploaded by:</b> ${escapeHtml(sheet.teacher_name || 'Teacher')}</div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px;">
+                    <a href="${pdfUrl}" target="_blank" rel="noopener noreferrer" class="header-btn" style="display:inline-block;background:#00796b;">View PDF</a>
+                    <a href="${pdfUrl}" download class="header-btn" style="display:inline-block;background:#555;">Download PDF</a>
+                    <a href="/student_portal?tab=subjects" class="header-btn" style="display:inline-block;background:#2e7d32;">Back to Subjects</a>
+                </div>
+                <iframe src="${pdfUrl}#toolbar=1&navpanes=0" title="${escapeHtml(sheet.name)}" style="width:100%;height:720px;border:1px solid #ccc;border-radius:6px;background:#fff;"></iframe>
+            </div>
+        </div>
+    </div>`;
+    res.send(renderTemplate(body, req));
+});
+
+app.post('/teacher_portal/upload_sheet', parseTeacherSheetUpload, (req, res) => {
+    if (!req.session.teacher_logged) return res.redirect('/login?type=teacher');
+    const teacher = teachers_list.find(t => t.id === req.session.teacher_logged);
+    if (!teacher) return res.redirect('/logout');
+
+    const sheetName = String(req.body.sheet_name || '').trim();
+    const subject = String(req.body.subject || '').trim();
+    const file = req.teacherSheetFile;
+    const teacherSubjects = normalizeTeacherSubjects(teacher);
+
+    if (!sheetName) return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Please enter a sheet name.'));
+    if (!subject || !teacherSubjects.includes(subject)) return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Please select one of your assigned subjects.'));
+    if (!file || !file.buffer || !file.buffer.length) return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Please select a PDF file.'));
+
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const looksPdf = file.mimetype === 'application/pdf' || ext === '.pdf' || file.buffer.slice(0, 5).toString('ascii') === '%PDF-';
+    if (!looksPdf || file.buffer.slice(0, 5).toString('ascii') !== '%PDF-') {
+        return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Only valid PDF files are allowed.'));
+    }
+    if (file.buffer.length > 20 * 1024 * 1024) {
+        return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('PDF is too large. Maximum file size is 20 MB.'));
+    }
+
+    const id = 'sheet_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
+    const safeBase = sheetName.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'subject_sheet';
+    const filename = `${id}_${safeBase}.pdf`;
+    const filePath = path.join(SHEETS_DIR, filename);
+    try {
+        fs.writeFileSync(filePath, file.buffer);
+    } catch (err) {
+        console.error('[Sheet Upload] save error:', err.message);
+        return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Could not save the PDF. Please check the public/sheets folder permissions.'));
+    }
+
+    uploaded_sheets.unshift({
+        id,
+        name: sheetName,
+        subject,
+        filename,
+        teacher_id: teacher.id,
+        teacher_name: teacher.name,
+        uploaded_at: new Date().toISOString()
+    });
+    savePortalData();
+    res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Sheet uploaded successfully!'));
+});
+
+// Teacher can delete only their own uploaded sheet. The PDF file and portal-data record are both removed.
+app.post('/teacher_portal/delete_sheet', express.urlencoded({ extended: true }), (req, res) => {
+    if (!req.session.teacher_logged) return res.redirect('/login?type=teacher');
+    const teacher = teachers_list.find(t => String(t.id) === String(req.session.teacher_logged));
+    if (!teacher) return res.redirect('/logout');
+
+    const sheetId = String(req.body.sheet_id || '').trim();
+    if (!sheetId) return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Sheet ID is missing.'));
+
+    const sheetIndex = uploaded_sheets.findIndex(x => String(x.id) === sheetId && String(x.teacher_id) === String(teacher.id));
+    if (sheetIndex === -1) {
+        return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Sheet not found or you are not allowed to delete it.'));
+    }
+
+    const sheet = uploaded_sheets[sheetIndex];
+    try {
+        if (sheet.filename) {
+            const filePath = path.join(SHEETS_DIR, path.basename(sheet.filename));
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        }
+    } catch (err) {
+        console.error('[Sheet Delete] file delete error:', err.message);
+        return res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Could not delete the PDF file.'));
+    }
+
+    uploaded_sheets.splice(sheetIndex, 1);
+    savePortalData();
+    res.redirect('/teacher_portal?subtab=upload_sheet&msg=' + encodeURIComponent('Sheet deleted successfully.'));
+});
+
+// Student/teacher-visible sheet PDF endpoint. Static public/sheets also serves these files directly.
+app.get('/teacher_portal/sheets/pdf/:filename', (req, res) => {
+    const filename = path.basename(req.params.filename || '');
+    const sheet = uploaded_sheets.find(x => x.filename === filename);
+    if (!sheet) return res.status(404).send('PDF not found.');
+    if (!req.session.teacher_logged && !req.session.student_logged) return res.redirect('/login?type=student');
+    res.sendFile(path.join(SHEETS_DIR, filename));
+});
+
+// Student-specific Subject Sheet page.
+// Each subject opens on its own page and shows the subject name, uploaded sheet name(s),
+// and a View PDF button. Students can only access sheets belonging to a subject listed
+// in the portal's Subjects & Teachers section.
+app.get('/student_portal/sheets', (req, res) => {
+    if (!req.session.student_logged) return res.redirect('/login?type=student');
+
+    const requestedSubject = String(req.query.subject || '').trim();
+    if (!requestedSubject) {
+        return res.redirect('/student_portal?tab=subjects');
+    }
+
+    const subjectRecord = subjects_list.find(sub =>
+        String(sub.name || '').trim().toLowerCase() === requestedSubject.toLowerCase()
+    );
+    if (!subjectRecord) {
+        return res.status(404).send(renderTemplate(`
+            <div class="main-container" style="max-width:900px;">
+                <div class="card" style="padding:25px;">
+                    <h3 style="color:#00796b;">Subject not found</h3>
+                    <p>The requested subject is not available.</p>
+                    <a href="/student_portal?tab=subjects" class="header-btn" style="display:inline-block;background:#00796b;">Back to Subjects</a>
+                </div>
+            </div>`, req));
+    }
+
+    const subjectSheets = uploaded_sheets.filter(sheet =>
+        String(sheet.subject || '').trim().toLowerCase() === String(subjectRecord.name || '').trim().toLowerCase()
+    );
+
+    const sheetRows = subjectSheets.length ? subjectSheets.map((sheet, index) => {
+        const pdfUrl = '/sheets/' + encodeURIComponent(sheet.filename);
+        return `
+            <div style="background:#f7f9fa;border:1px solid #ddd;border-radius:8px;padding:18px;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap;">
+                    <div>
+                        <div style="font-size:16px;font-weight:bold;color:#111;">${index + 1}. ${escapeHtml(sheet.name)}</div>
+                        <div style="font-size:12px;color:#666;margin-top:5px;">Uploaded by: ${escapeHtml(sheet.teacher_name || 'Teacher')}</div>
+                    </div>
+                    <a href="${pdfUrl}" target="_blank" rel="noopener noreferrer" class="header-btn" style="display:inline-block;background:#00796b;">📄 View PDF</a>
+                </div>
+            </div>`;
+    }).join('') : `
+        <div style="text-align:center;padding:35px;color:#777;background:#f7f7f7;border:1px solid #ddd;border-radius:8px;">
+            No sheet has been uploaded for this subject yet.
+        </div>`;
+
+    const body = `
+    <div class="main-container" style="max-width:1000px;">
+        <div class="student-dashboard-wrapper">
+            <div class="sidebar-menu">
+                <a href="/student_portal?tab=profile" class="sidebar-item">🏠 Dashboard Profile</a>
+                <a href="/student_portal?tab=subjects" class="sidebar-item" style="background:rgba(0,0,0,0.1);font-weight:bold;">📚 My Subjects & Teachers</a>
+                <a href="/student_portal?tab=results" class="sidebar-item">📊 My Result & PDF Sheet</a>
+                <a href="/student_portal?tab=change_password" class="sidebar-item">🔐 Change Password</a>
+                <a href="#" class="sidebar-item">💵 Tuition Fees</a>
+                <a href="#" class="sidebar-item">🌐 Online Live Class</a>
+                <a href="#" class="sidebar-item">📝 Online Exam</a>
+                <a href="#" class="sidebar-item">💻 E-Learning</a>
+                <a href="#" class="sidebar-item">📋 Homeworks</a>
+                ${getActiveExam() ? '<a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>' : ''}
+            </div>
+            <div class="profile-content-area">
+                <div class="student-id-banner">Subject Sheet</div>
+                <div style="padding:25px;">
+                    <div style="background:#00796b;color:#fff;border-radius:8px;padding:18px 20px;margin-bottom:20px;">
+                        <div style="font-size:12px;opacity:.9;">SUBJECT</div>
+                        <div style="font-size:23px;font-weight:bold;margin-top:3px;">${escapeHtml(subjectRecord.name)}</div>
+                        <div style="font-size:13px;margin-top:8px;opacity:.95;">Assigned Teacher: ${escapeHtml(subjectRecord.teacher || 'TBA')}</div>
+                    </div>
+
+                    <h3 style="margin:0 0 14px;color:#00796b;">📄 ${escapeHtml(subjectRecord.name)} Sheets</h3>
+                    ${sheetRows}
+
+                    <div style="margin-top:20px;">
+                        <a href="/student_portal?tab=subjects" class="header-btn" style="display:inline-block;background:#555;">← Back to Subjects & Teachers</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    res.send(renderTemplate(body, req));
 });
 
 // Student Portal
@@ -709,13 +1371,78 @@ app.get('/student_portal', (req, res) => {
     let msg = req.query.msg || '';
     let body = '';
 
-    if (tab === 'subjects') {
-        let rows = subjects_list.map(sub => `
+    if (tab === 'fees') {
+        const myFees = studentFees(student.id).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+        const feeRows = myFees.length ? myFees.map((fee, i) => `
+            <tr>
+                <td style="text-align:center;">${i + 1}</td>
+                <td>${fee.month}</td>
+                <td>${feeNumber(fee.payable).toFixed(0)}</td>
+                <td>${feeNumber(fee.paid).toFixed(0)}</td>
+                <td>${feeNumber(fee.scholarship).toFixed(0)}</td>
+                <td style="color:${feeDue(fee) > 0 ? '#d00' : '#16853a'};font-weight:bold;">Tk. ${feeDue(fee).toFixed(0)}</td>
+                <td style="text-align:center;">—</td>
+            </tr>`).join('') : `
+            <tr><td colspan="7" style="text-align:center;padding:25px;color:#666;">No tuition fee record has been added yet.</td></tr>`;
+
+        const totalPayable = myFees.reduce((s, f) => s + feeNumber(f.payable), 0);
+        const totalPaid = myFees.reduce((s, f) => s + feeNumber(f.paid), 0);
+        const totalScholarship = myFees.reduce((s, f) => s + feeNumber(f.scholarship), 0);
+        const totalDue = myFees.reduce((s, f) => s + feeDue(f), 0);
+
+        body = `
+        <div class="main-container">
+            <div class="student-dashboard-wrapper">
+                <div class="sidebar-menu">
+                    <a href="/student_portal" class="sidebar-item">🏠 Dashboard</a>
+                    <a href="/student_portal?tab=profile" class="sidebar-item">👤 My Profile</a>
+                    <a href="/student_portal?tab=subjects" class="sidebar-item">📚 My Subjects & Teachers</a>
+                    <a href="/student_portal?tab=results" class="sidebar-item">📊 My Result & PDF Sheet</a>
+                    <a href="/student_portal?tab=fees" class="sidebar-item" style="background:rgba(0,0,0,0.1);font-weight:bold;">💵 Tuition Fees</a>
+                    <a href="/student_portal?tab=change_password" class="sidebar-item">🔐 Change Password</a>
+                    ${getActiveExam() ? '<a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>' : ''}
+                </div>
+                <div class="profile-content-area">
+                    <div style="padding:18px 12px 0;">
+                        <h3 style="margin:0;border-bottom:2px solid ${portal_settings.accent_color};padding-bottom:7px;">💵 MY PAYMENTS</h3>
+                        <div style="margin-top:8px;">
+                            <span style="display:inline-block;background:#075b25;color:#fff;padding:8px 14px;font-weight:bold;">Monthly Payments</span>
+                            <span style="display:inline-block;background:#0a3b1f;color:#fff;padding:8px 14px;font-weight:bold;">Payment History</span>
+                        </div>
+                        <h3 style="border-bottom:2px solid ${portal_settings.accent_color};padding:8px 0;">⚙ PAYMENTS (MONTH WISE):</h3>
+                        <div style="overflow-x:auto;">
+                            <table class="dash-table" style="margin-top:8px;">
+                                <tr>
+                                    <th>SI</th><th>Month Name [Payment]</th><th>Payable Amt.</th><th>Paid Amt.</th>
+                                    <th>Scholarship</th><th>Due Amt.</th><th>Pay Online</th>
+                                </tr>
+                                ${feeRows}
+                                <tr style="font-weight:bold;">
+                                    <td></td><td style="text-align:right;">Total:</td>
+                                    <td style="color:#00c;font-size:16px;">${totalPayable.toFixed(0)}</td>
+                                    <td style="color:#16853a;font-size:16px;">${totalPaid.toFixed(0)}</td>
+                                    <td style="font-size:16px;">${totalScholarship.toFixed(0)}</td>
+                                    <td style="color:${totalDue > 0 ? '#d00' : '#16853a'};font-size:16px;">${totalDue.toFixed(0)}</td>
+                                    <td></td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    } else if (tab === 'subjects') {
+        let rows = subjects_list.map(sub => {
+            const subjectSheets = uploaded_sheets.filter(x => String(x.subject).trim().toLowerCase() === String(sub.name).trim().toLowerCase());
+            const sheetButtons = subjectSheets.length ? `<a href="/student_portal/sheets?subject=${encodeURIComponent(sub.name)}" class="header-btn" style="display:inline-block;padding:7px 13px;margin:2px 0;background:#00796b;font-size:12px;">📄 View Sheet</a>` : '<span style="color:#999;font-size:12px;">No sheet</span>';
+            return `
             <tr>
                 <td style="text-align: center; font-weight: bold;">${sub.sl}</td>
-                <td style="font-weight: bold; color: #111111;">${sub.name}</td>
-                <td style="white-space: pre-line; font-size: 13px; color: #333333;">${sub.teacher}</td>
-            </tr>`).join('');
+                <td style="font-weight: bold; color: #111111;">${escapeHtml(sub.name)}</td>
+                <td style="white-space: pre-line; font-size: 13px; color: #333333;">${escapeHtml(sub.teacher)}</td>
+                <td style="text-align:center;">${sheetButtons}</td>
+            </tr>`;
+        }).join('');
 
         body = `
         <div class="main-container">
@@ -730,7 +1457,7 @@ app.get('/student_portal', (req, res) => {
                     <a href="#" class="sidebar-item">📝 Online Exam</a>
                     <a href="#" class="sidebar-item">💻 E-Learning</a>
                     <a href="#" class="sidebar-item">📋 Homeworks</a>
-                    <a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>
+${getActiveExam() ? '<a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>' : ''}
                 </div>
                 <div class="profile-content-area">
                     <div class="student-id-banner">Subjects & Assigned Teachers (${portal_settings.school_name})</div>
@@ -740,6 +1467,7 @@ app.get('/student_portal', (req, res) => {
                                 <th style="width: 60px; background-color: ${portal_settings.accent_color};">SI</th>
                                 <th style="background-color: ${portal_settings.accent_color};">Subject Name</th>
                                 <th style="background-color: ${portal_settings.accent_color};">Assigned Teacher & Contact</th>
+                                <th style="background-color: ${portal_settings.accent_color}; text-align:center;">Subject Sheet</th>
                             </tr>
                             ${rows}
                         </table>
@@ -772,7 +1500,7 @@ app.get('/student_portal', (req, res) => {
                     <a href="/student_portal?tab=profile" class="sidebar-item">🏠 Dashboard Profile</a>
                     <a href="/student_portal?tab=subjects" class="sidebar-item">📚 My Subjects & Teachers</a>
                     <a href="/student_portal?tab=results" class="sidebar-item" style="background: rgba(0,0,0,0.1); font-weight:bold;">📊 Result & Progress Report</a>
-                    <a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>
+${getActiveExam() ? '<a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>' : ''}
                     <a href="/student_portal?tab=change_password" class="sidebar-item">🔐 Change Password</a>
                 </div>
                 <div class="profile-content-area">
@@ -822,8 +1550,11 @@ app.get('/student_portal', (req, res) => {
         </div>`;
     } else if (tab === 'admit_card') {
         const activeExam = getActiveExam();
+        const admitCardFeeDue = studentFees(student.id).reduce((sum, fee) => sum + feeDue(fee), 0);
         if (!activeExam) {
             body = `<div class="main-container"><div class="profile-content-area" style="max-width:900px;margin:0 auto;padding:35px;text-align:center;"><h3>ADMIT CARD</h3><p style="color:#b71c1c;font-weight:bold;">No examination is currently active. Please check again after the administration starts an exam.</p></div></div>`;
+        } else if (admitCardFeeDue > 0) {
+            body = `<div class="main-container"><div class="profile-content-area" style="max-width:900px;margin:0 auto;padding:35px;text-align:center;"><h3>ADMIT CARD</h3><p style="color:#b71c1c;font-weight:bold;font-size:18px;">Tuition Fee Due: Tk. ${admitCardFeeDue.toFixed(0)}</p><p>Please clear the due tuition fee to view your Admit Card.</p></div></div>`;
         } else {
             const photoHtml = student.photo ? `<img src="${student.photo}" alt="Student Photo" style="width:100%;height:100%;object-fit:cover;">` : '👤';
             body = `<div class="main-container" style="max-width:900px;">
@@ -838,8 +1569,8 @@ app.get('/student_portal', (req, res) => {
                             </div>
                             <div style="text-align:center;padding:10px 0 5px;"><div style="width:58px;height:72px;border:1px solid #777;margin:0 auto 8px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:25px;">${photoHtml}</div><div style="font-size:16px;color:#0000aa;font-weight:bold;">ADMIT CARD</div><div style="font-size:14px;color:#0000aa;font-weight:bold;">${activeExam.title.toUpperCase()} - 2026</div></div>
                             <table style="width:100%;border-collapse:collapse;font-size:10px;"><tr><td style="border:1px solid #999;padding:4px;">Student's Name: <b>${student.name}</b></td><td style="border:1px solid #999;padding:4px;">Roll Number: <b>${student.roll}</b></td></tr><tr><td style="border:1px solid #999;padding:4px;">Student ID: <b>${student.student_no}</b></td><td style="border:1px solid #999;padding:4px;">Section: <b>${student.section || student.room}</b></td></tr><tr><td style="border:1px solid #999;padding:4px;">Class: <b>${student.class}</b></td><td style="border:1px solid #999;padding:4px;">Shift: <b>${student.shift || 'Day'}</b></td></tr></table>
-                            <div style="text-align:right;padding:18px 12px 6px;font-size:9px;font-weight:bold;"><span>________________<br>Principal</span></div>
-                            <div style="background:#000;color:#fff;text-align:center;padding:5px;font-weight:bold;font-size:13px;"><a href="https://www.nbd.dpdns.org/" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">Dev.Center</a></div>
+                            <div style="display:flex;justify-content:space-between;padding:12px 12px 4px;font-size:9px;font-weight:bold;"><span>.<br>.</span><span>Principal<br>Dev's.Center</span></div>
+                            <div style="background:#000;color:#fff;text-align:center;padding:5px;font-weight:bold;font-size:13px;">Dev's.Center</div>
                         </div>
                     </div>
                 </div>
@@ -859,7 +1590,7 @@ app.get('/student_portal', (req, res) => {
                     <a href="#" class="sidebar-item">📝 Online Exam</a>
                     <a href="#" class="sidebar-item">💻 E-Learning</a>
                     <a href="#" class="sidebar-item">📋 Homeworks</a>
-                    <a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>
+${getActiveExam() ? '<a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>' : ''}
                 </div>
                 <div class="profile-content-area">
                     <div class="student-id-banner">Change Portal Password</div>
@@ -896,7 +1627,7 @@ app.get('/student_portal', (req, res) => {
                     <a href="#" class="sidebar-item">📝 Online Exam</a>
                     <a href="#" class="sidebar-item">💻 E-Learning</a>
                     <a href="#" class="sidebar-item">📋 Homeworks</a>
-                    <a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>
+${getActiveExam() ? '<a href="/student_portal?tab=admit_card" class="sidebar-item">💳 Admit Card</a>' : ''}
                 </div>
                 <div class="profile-content-area">
                     <div class="student-id-banner">Student ID # ${student.student_no}</div>
@@ -913,14 +1644,17 @@ app.get('/student_portal', (req, res) => {
                             <div class="feature-icon" style="background: #e67e22;">👤</div>
                             <div class="feature-title">My Profile</div>
                         </a>
+                        <a href="/student_portal?tab=fees" class="feature-box">
+                            <div class="feature-icon" style="background: #2e8b57;">💵</div>
+                            <div class="feature-title">Tuition Fees</div>
+                        </a>
                         <a href="/student_portal?tab=results" class="feature-box">
                             <div class="feature-icon" style="background: #27ae60;">📊</div>
                             <div class="feature-title">My Result</div>
-                        </a>
-                        <a href="/student_portal?tab=admit_card" class="feature-box">
+                        </a>${getActiveExam() ? `<a href="/student_portal?tab=admit_card" class="feature-box">
                             <div class="feature-icon" style="background: #2e8b57;">💳</div>
                             <div class="feature-title">Admit Card</div>
-                        </a>
+                        </a>` : ''}
                         <a href="/student_portal?tab=change_password" class="feature-box">
                             <div class="feature-icon" style="background: #c0392b;">🔐</div>
                             <div class="feature-title">Change Password</div>
@@ -950,6 +1684,7 @@ app.get('/student_portal', (req, res) => {
             </div>
         </div>`;
     }
+    savePortalData();
     res.send(renderTemplate(body, req));
 });
 
@@ -971,7 +1706,7 @@ app.get('/student_portal/download_result_pdf', (req, res) => {
         tableRows += `<tr><td>${sub.name}</td><td style="text-align:center;">${m.written}</td><td style="text-align:center;">${m.mcq}</td><td style="text-align:center;font-weight:bold;">${m.total}</td><td style="text-align:center;font-weight:bold;">${m.grade}</td></tr>`;
     });
     const avg = countSubs ? (totalMarksSum / countSubs).toFixed(2) : '0.00';
-    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${exam.title} - Result - ${student.name}</title><style>body{font-family:Arial,sans-serif;padding:35px;color:#111}.header{text-align:center;border-bottom:2px solid #333;padding-bottom:12px}.info{margin:18px 0;font-size:14px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #333;padding:8px}th{background:#333;color:#fff}.footer{display:flex;justify-content:space-between;margin-top:70px;font-weight:bold}@media print{.no-print{display:none}}</style></head><body onload="window.print()"><div class="header"><h2 style="margin:0">${portal_settings.school_name}</h2><p style="margin:5px 0;color:#555">${portal_settings.tagline}</p><h3>${exam.title.toUpperCase()} - 2026</h3><strong>RESULT & PROGRESS REPORT</strong></div><div class="info"><b>Student Name:</b> ${student.name}<br><b>Roll Number:</b> ${student.roll} &nbsp; | &nbsp; <b>Student ID:</b> ${student.student_no}<br><b>Class:</b> ${student.class} &nbsp; | &nbsp; <b>Room:</b> ${student.room}</div><table><tr><th>Subject Name</th><th>Written</th><th>MCQ</th><th>Total</th><th>Grade</th></tr>${tableRows}</table><p><b>Total Aggregate Score:</b> ${totalMarksSum} &nbsp; | &nbsp; <b>Average:</b> ${avg}</p><div class="footer"><div>____________________<br>Class Teacher</div><div>____________________<br>Principal</div></div><p style="text-align:center;margin-top:35px;font-weight:bold;"><a href="https://www.nbd.dpdns.org/" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">Dev.Center</a> | Software by <strong>NIGHT CLOUD</strong></p></body></html>`);
+    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${exam.title} - Result - ${student.name}</title><style>body{font-family:Arial,sans-serif;padding:35px;color:#111}.header{text-align:center;border-bottom:2px solid #333;padding-bottom:12px}.info{margin:18px 0;font-size:14px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #333;padding:8px}th{background:#333;color:#fff}.footer{display:flex;justify-content:space-between;margin-top:70px;font-weight:bold}@media print{.no-print{display:none}}</style></head><body onload="window.print()"><div class="header"><h2 style="margin:0">${portal_settings.school_name}</h2><p style="margin:5px 0;color:#555">${portal_settings.tagline}</p><h3>${exam.title.toUpperCase()} - 2026</h3><strong>RESULT & PROGRESS REPORT</strong></div><div class="info"><b>Student Name:</b> ${student.name}<br><b>Roll Number:</b> ${student.roll} &nbsp; | &nbsp; <b>Student ID:</b> ${student.student_no}<br><b>Class:</b> ${student.class} &nbsp; | &nbsp; <b>Room:</b> ${student.room}</div><table><tr><th>Subject Name</th><th>Written</th><th>MCQ</th><th>Total</th><th>Grade</th></tr>${tableRows}</table><p><b>Total Aggregate Score:</b> ${totalMarksSum} &nbsp; | &nbsp; <b>Average:</b> ${avg}</p><div class="footer"><div>.<br>.</div><div>Dev's.Center<br>Principal</div></div><p style="text-align:center;margin-top:35px;font-weight:bold;">Dev's.Center</p></body></html>`);
 });
 
 // Printable admit card for the currently active exam
@@ -981,8 +1716,10 @@ app.get('/student_portal/download_admit_card', (req, res) => {
     const exam = getActiveExam();
     if (!student) return res.redirect('/logout');
     if (!exam) return res.redirect('/student_portal?tab=admit_card');
+    const printAdmitCardFeeDue = studentFees(student.id).reduce((sum, fee) => sum + feeDue(fee), 0);
+    if (printAdmitCardFeeDue > 0) return res.redirect('/student_portal?tab=admit_card');
     const photoHtml = student.photo ? `<img src="${student.photo}" style="width:100%;height:100%;object-fit:cover;">` : '👤';
-    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Admit Card - ${student.name}</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}.card{width:470px;max-width:100%;margin:0 auto;border:2px solid #111;padding:7px;box-sizing:border-box}.photo{width:58px;height:72px;border:1px solid #777;margin:0 auto 8px;overflow:hidden;display:flex;align-items:center;justify-content:center}.info{width:100%;border-collapse:collapse;font-size:11px}.info td{border:1px solid #999;padding:5px}.sign{display:flex;justify-content:space-between;margin-top:20px;font-size:10px;font-weight:bold}.brand{background:#000;color:#fff;text-align:center;padding:6px;font-weight:bold}@media print{.no-print{display:none}}</style></head><body onload="window.print()"><div class="no-print" style="text-align:center;margin-bottom:10px"><button onclick="window.print()">Print / Save PDF</button></div><div class="card"><div style="text-align:center;border-bottom:1px solid #999;padding-bottom:7px"><div style="font-weight:bold;font-size:18px;color:#16853a">${portal_settings.school_name}</div><div style="font-size:11px;color:#d00;font-weight:bold">${portal_settings.tagline}</div></div><div style="text-align:center;padding:10px 0 5px"><div class="photo">${photoHtml}</div><div style="font-size:16px;color:#0000aa;font-weight:bold">ADMIT CARD</div><div style="font-size:14px;color:#0000aa;font-weight:bold">${exam.title.toUpperCase()} - 2026</div></div><table class="info"><tr><td>Student's Name: <b>${student.name}</b></td><td>Roll Number: <b>${student.roll}</b></td></tr><tr><td>Student ID: <b>${student.student_no}</b></td><td>Section: <b>${student.section || student.room}</b></td></tr><tr><td>Class: <b>${student.class}</b></td><td>Shift: <b>${student.shift || 'Day'}</b></td></tr></table><div class="sign" style="justify-content:flex-end"><span>________________<br>Principal</span></div><div class="brand"><a href="https://www.nbd.dpdns.org/" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">Dev.Center</a></div></div></body></html>`);
+    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Admit Card - ${student.name}</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}.card{width:470px;max-width:100%;margin:0 auto;border:2px solid #111;padding:7px;box-sizing:border-box}.photo{width:58px;height:72px;border:1px solid #777;margin:0 auto 8px;overflow:hidden;display:flex;align-items:center;justify-content:center}.info{width:100%;border-collapse:collapse;font-size:11px}.info td{border:1px solid #999;padding:5px}.sign{display:flex;justify-content:space-between;margin-top:20px;font-size:10px;font-weight:bold}.brand{background:#000;color:#fff;text-align:center;padding:6px;font-weight:bold}@media print{.no-print{display:none}}</style></head><body onload="window.print()"><div class="no-print" style="text-align:center;margin-bottom:10px"><button onclick="window.print()">Print / Save PDF</button></div><div class="card"><div style="text-align:center;border-bottom:1px solid #999;padding-bottom:7px"><div style="font-weight:bold;font-size:18px;color:#16853a">${portal_settings.school_name}</div><div style="font-size:11px;color:#d00;font-weight:bold">${portal_settings.tagline}</div></div><div style="text-align:center;padding:10px 0 5px"><div class="photo">${photoHtml}</div><div style="font-size:16px;color:#0000aa;font-weight:bold">ADMIT CARD</div><div style="font-size:14px;color:#0000aa;font-weight:bold">${exam.title.toUpperCase()} - 2026</div></div><table class="info"><tr><td>Student's Name: <b>${student.name}</b></td><td>Roll Number: <b>${student.roll}</b></td></tr><tr><td>Student ID: <b>${student.student_no}</b></td><td>Section: <b>${student.section || student.room}</b></td></tr><tr><td>Class: <b>${student.class}</b></td><td>Shift: <b>${student.shift || 'Day'}</b></td></tr></table><div class="sign"><span>.<br>.</span><span>Principal<br>Dev's.Center</span></div><div class="brand">Dev's.Center</div></div></body></html>`);
 });
 
 app.post('/student_portal/change_password', (req, res) => {
@@ -1004,6 +1741,7 @@ app.post('/student_portal/change_password', (req, res) => {
         msg = 'Password changed successfully!';
     }
 
+    savePortalData();
     res.redirect(`/student_portal?tab=change_password&msg=${encodeURIComponent(msg)}`);
 });
 
@@ -1015,7 +1753,10 @@ app.get('/dashboard', (req, res) => {
 
     let presetOptions = Object.keys(PRESET_THEMES).map(key => `<option value="${key}">${PRESET_THEMES[key].name}</option>`).join('');
     let teacherSelectOptions = teachers_list.length > 0 
-        ? teachers_list.map(t => `<option value="${t.id}">${t.name} (${t.subject}) - Ph: ${t.phone}</option>`).join('')
+        ? teachers_list.map(t => {
+            const assigned = getTeacherSubjects(t);
+            return `<option value="${t.id}">${t.name} (${assigned.length ? assigned.join(', ') : 'No Subject'}) - Ph: ${t.phone}</option>`;
+        }).join('')
         : '<option value="">-- No Teachers Available (Create one first) --</option>';
     let studentSelectOptions = students_list.length > 0 
         ? students_list.map(s => `<option value="${s.roll}">Roll: ${s.roll} - ${s.name} (Class: ${s.class})</option>`).join('')
@@ -1028,7 +1769,7 @@ app.get('/dashboard', (req, res) => {
             <td>${t.pass}</td>
             <td style="font-weight: bold;">${t.name}</td>
             <td>${t.phone}</td>
-            <td>${t.subject}</td>
+            <td>${getTeacherSubjects(t).join(', ') || 'No Subject'}</td>
             <td>
                 <form method="POST" style="margin:0;">
                     <input type="hidden" name="action" value="delete_teacher">
@@ -1088,33 +1829,18 @@ app.get('/dashboard', (req, res) => {
             </td>
         </tr>`).join('');
 
-    const classOptionsForRow = current => { let out=''; for(let i=1;i<=10;i++){ const v=`Class ${i}`; out += `<option value="${v}" ${current===v?'selected':''}>${v}</option>`; } return out; };
-    const roomOptionsForRow = current => { let out=''; for(let i=1;i<=10;i++){ const v=`Room ${i}`; out += `<option value="${v}" ${current===v?'selected':''}>${v}</option>`; } return out; };
-
     let studentsRows = students_list.length > 0 ? students_list.map(s => `
         <tr>
-            <td style="text-align:center;"><input type="checkbox" name="selected_students" value="${s.roll}"></td>
-            <td><input type="text" name="new_id" value="${s.id}" class="dash-input student-edit"></td>
-            <td><input type="text" name="new_pass" value="${s.pass}" class="dash-input student-edit"></td>
-            <td><input type="text" name="new_roll" value="${s.roll}" class="dash-input student-edit"></td>
-            <td><input type="text" name="new_name" value="${s.name}" class="dash-input student-edit"></td>
-            <td><select name="new_class" class="dash-input student-edit">${classOptionsForRow(s.class)}</select></td>
-            <td><select name="new_room" class="dash-input student-edit">${roomOptionsForRow(s.room)}</select></td>
-            <td><input type="text" name="new_student_no" value="${s.student_no}" class="dash-input student-edit"></td>
-            <td style="white-space:nowrap;">
-                <form method="POST" style="margin:0;display:inline;">
-                    <input type="hidden" name="action" value="update_student_full">
-                    <input type="hidden" name="target_student_id" value="${s.id}">
-                    <input type="hidden" name="new_id" class="mirror-new-id">
-                    <input type="hidden" name="new_pass" class="mirror-new-pass">
-                    <input type="hidden" name="new_roll" class="mirror-new-roll">
-                    <input type="hidden" name="new_name" class="mirror-new-name">
-                    <input type="hidden" name="new_class" class="mirror-new-class">
-                    <input type="hidden" name="new_room" class="mirror-new-room">
-                    <input type="hidden" name="new_student_no" class="mirror-new-student-no">
-                    <button type="submit" class="header-btn" style="border:none;cursor:pointer;background:#2e7d32;" onclick="return syncStudentEdit(this)">Update</button>
-                </form>
-                <form method="POST" style="margin:5px 0 0;display:inline;">
+            <td style="text-align: center;"><input type="checkbox" name="selected_students" value="${s.roll}"></td>
+            <td>${s.id}</td>
+            <td>${s.pass}</td>
+            <td>${s.roll}</td>
+            <td>${s.name}</td>
+            <td>${s.class}</td>
+            <td>${s.room}</td>
+            <td>${s.student_no}</td>
+            <td>
+                <form method="POST" style="margin:0;">
                     <input type="hidden" name="action" value="delete_student">
                     <input type="hidden" name="target_roll" value="${s.roll}">
                     <button type="submit" class="del-btn" onclick="return confirm('Are you sure you want to delete this student?')">Delete</button>
@@ -1279,23 +2005,36 @@ app.get('/dashboard', (req, res) => {
                         <div>
                             <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Teacher Full Name:</label>
                             <input type="text" name="teacher_name" class="dash-input" placeholder="e.g. MASUDA KHATUN" required>
-                            <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Phone Number & Subject:</label>
-                            <div style="display: flex; gap: 10px;">
-                                <input type="text" name="teacher_phone" class="dash-input" placeholder="01805992372" required style="margin-bottom:0;">
-                                <select name="teacher_subject" class="dash-input" required style="margin-bottom:0;">
-                                    <option value="">-- Select Subject --</option>
-                                    <option value="Bangla-I">Bangla-I</option>
-                                    <option value="Bangla-II">Bangla-II</option>
-                                    <option value="English-I">English-I</option>
-                                    <option value="English-II">English-II</option>
-                                    <option value="Mathematics">Mathematics</option>
-                                    <option value="ICT">ICT</option>
-                                    <option value="Islam and Moral Education">Islam and Moral Education</option>
-                                    <option value="Bangladesh and Global Studies">Bangladesh and Global Studies</option>
-                                    <option value="SCIENCE">SCIENCE</option>
-                                    <option value="Fine Arts & Crafts">Fine Arts & Crafts</option>
-                                </select>
-                            </div>
+                            <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Phone Number:</label>
+                            <input type="text" name="teacher_phone" class="dash-input" placeholder="01805992372" required>
+                            <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Subject 1:</label>
+                            <select name="teacher_subject1" class="dash-input teacher-subject-select" style="margin-bottom:8px;">
+                                <option value="">-- No Subject --</option>
+                                ${subjects_list.map(sub => `<option value="${sub.name}">${sub.name}</option>`).join('')}
+                            </select>
+                            <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Subject 2: <span style="font-weight:normal;color:#666;">(Optional)</span></label>
+                            <select name="teacher_subject2" class="dash-input teacher-subject-select" style="margin-bottom:8px;">
+                                <option value="">-- No Subject --</option>
+                                ${subjects_list.map(sub => `<option value="${sub.name}">${sub.name}</option>`).join('')}
+                            </select>
+                            <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Subject 3: <span style="font-weight:normal;color:#666;">(Optional)</span></label>
+                            <select name="teacher_subject3" class="dash-input teacher-subject-select" style="margin-bottom:0;">
+                                <option value="">-- No Subject --</option>
+                                ${subjects_list.map(sub => `<option value="${sub.name}">${sub.name}</option>`).join('')}
+                            </select>
+                            <small style="display:block;margin-top:5px;color:#666;">Optional — no subject is also allowed. The same subject cannot be selected more than once.</small>
+                            <script>
+                            document.currentScript.parentElement.querySelectorAll('.teacher-subject-select').forEach(function(select){
+                                select.addEventListener('change', function(){
+                                    const selects=[...document.currentScript.parentElement.querySelectorAll('.teacher-subject-select')];
+                                    const values=selects.map(s=>s.value).filter(Boolean);
+                                    if(new Set(values).size !== values.length){
+                                        alert('The same subject cannot be selected more than once.');
+                                        this.value='';
+                                    }
+                                });
+                            });
+                            </script>
                         </div>
                     </div>
                     <button type="submit" class="header-btn" style="cursor:pointer; border:none; margin-top:15px; background-color: #00796b;">Create Teacher Account</button>
@@ -1358,14 +2097,13 @@ app.get('/dashboard', (req, res) => {
 
             <div class="dashboard-grid">
                 <div>
-                    <h4 style="color:#111111;">3. Add Student (Custom Number / User ID)</h4>
+                    <h4 style="color:#111111;">3. Add New Student</h4>
                     <form method="POST">
                         <input type="hidden" name="action" value="add_student">
-                        <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Custom User ID / Number:</label>
+                        <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Login User ID:</label>
                         <input type="text" name="student_id" class="dash-input" placeholder="e.g. jihan365" required>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Password:</label>
-                        <input type="text" class="dash-input" value="Same as User ID" readonly>
-                        <small style="display:block;color:#555;margin-top:4px;">Password automatically User ID-এর সমান হবে।</small>
+                        <input type="text" name="student_pass" class="dash-input" placeholder="e.g. 1234" required>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Roll Number:</label>
                         <input type="text" name="roll" class="dash-input" placeholder="e.g. 365" required>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Name:</label>
@@ -1374,34 +2112,16 @@ app.get('/dashboard', (req, res) => {
                         <select name="class" class="dash-input" required>${classOptions}</select>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Room Number:</label>
                         <select name="room" class="dash-input" required>${roomOptions}</select>
+                        <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Shift:</label>
+                        <select name="shift" class="dash-input" required>
+                            <option value="Day">Day</option>
+                            <option value="Morning">Morning</option>
+                        </select>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Student ID No:</label>
                         <input type="text" name="student_no" class="dash-input" placeholder="2620600196" required>
                         <button type="submit" class="header-btn" style="cursor:pointer; border:none; margin-top:10px;">Add Student</button>
                     </form>
                 </div>
-                <div style="margin-top:20px; padding:15px; border:1px solid #ddd; border-radius:10px; background:#f8fbff;">
-                    <h4 style="color:#111111; margin-top:0;">3A. Bulk Create Students (User ID Range)</h4>
-                    <p style="font-size:12px;color:#555;">User ID Start/End দাও। Password automatically User ID-এর মতোই হবে। Roll Start/End আলাদাভাবে দিতে পারবে; যেমন User ID 8100–8150 এবং Roll 1–51।</p>
-                    <form method="POST">
-                        <input type="hidden" name="action" value="bulk_add_students">
-                        <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Student Name (সব account-এ এই নাম যাবে):</label>
-                        <input type="text" name="bulk_name" class="dash-input" placeholder="e.g. Student Name" required>
-                        <label style="display:block; margin:10px 0 6px; font-size:12px; color:#111111;">User ID Start:</label>
-                        <input type="number" name="bulk_id_start" class="dash-input" min="1" required placeholder="e.g. 8100">
-                        <label style="display:block; margin:10px 0 6px; font-size:12px; color:#111111;">User ID End:</label>
-                        <input type="number" name="bulk_id_end" class="dash-input" min="1" required placeholder="e.g. 8150">
-                        <label style="display:block; margin:10px 0 6px; font-size:12px; color:#111111;">Roll Start:</label>
-                        <input type="number" name="bulk_roll_start" class="dash-input" min="1" required placeholder="e.g. 1">
-                        <label style="display:block; margin:10px 0 6px; font-size:12px; color:#111111;">Roll End:</label>
-                        <input type="number" name="bulk_roll_end" class="dash-input" min="1" required placeholder="e.g. 51">
-                        <label style="display:block; margin:10px 0 6px; font-size:12px; color:#111111;">Class:</label>
-                        <select name="bulk_class" class="dash-input" required>${classOptions}</select>
-                        <label style="display:block; margin:10px 0 6px; font-size:12px; color:#111111;">Room Number:</label>
-                        <select name="bulk_room" class="dash-input" required>${roomOptions}</select>
-                        <button type="submit" class="header-btn" style="cursor:pointer; border:none; margin-top:10px;" onclick="return confirm('আপনার দেওয়া User ID range এবং Roll range অনুযায়ী student account তৈরি করবেন? Password User ID-এর মতোই হবে।')">Create Students</button>
-                    </form>
-                </div>
-
                 <div>
                     <h4 style="color:#111111;">4. Update Student Details</h4>
                     <form method="POST">
@@ -1417,8 +2137,7 @@ app.get('/dashboard', (req, res) => {
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">New User ID:</label>
                         <input type="text" name="new_id" class="dash-input" placeholder="New ID" required>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">New Password:</label>
-                        <input type="text" class="dash-input" value="Same as New User ID" readonly>
-                        <small style="display:block;color:#555;margin-top:4px;">New User ID save হলে Password-ও একই হবে।</small>
+                        <input type="text" name="new_pass" class="dash-input" placeholder="New pass" required>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">New Room:</label>
                         <select name="new_room" class="dash-input" required>${roomOptions}</select>
                         <button type="submit" class="header-btn" style="cursor:pointer; border:none; margin-top: 10px;">Update Student Info</button>
@@ -1427,42 +2146,116 @@ app.get('/dashboard', (req, res) => {
             </div>
         </div>
 
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap;">
-                <h4 style="color:#111111;margin:0;">5. Registered Students List</h4>
-                <button type="button" class="del-btn" onclick="deleteSelectedStudents()">🗑 Delete Selected</button>
+
+        <div class="card" style="margin-bottom:20px;">
+            <h4 style="color:#111;margin-top:0;">💵 Tuition Fee Management</h4>
+            <p style="font-size:13px;color:#555;">Search a student by User ID / Student ID / name, add a monthly fee, or apply the same fee to every registered student.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+                <div style="background:rgba(0,0,0,0.02);border:1px dashed #aaa;padding:15px;border-radius:6px;">
+                    <h5 style="margin-top:0;">1. Add Fee to One Student</h5>
+                    <input id="fee_student_search" type="text" class="dash-input" placeholder="Search User ID / Student ID / Name" oninput="filterFeeStudents(this.value)">
+                    <form method="POST">
+                        <input type="hidden" name="action" value="add_student_fee">
+                        <label style="display:block;font-size:12px;font-weight:bold;">Select Student:</label>
+                        <select id="fee_student_select" name="student_id" class="dash-input" required>
+                            ${students_list.map(s => `<option value="${s.id}">${s.id} — ${s.student_no} — ${s.name}</option>`).join('')}
+                        </select>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Month:</label>
+                        <input type="text" name="month" class="dash-input" placeholder="January, 2026" required>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Payable Amount:</label>
+                        <input type="number" name="payable" class="dash-input" min="0" step="1" required>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Paid Amount:</label>
+                        <input type="number" name="paid" class="dash-input" min="0" step="1" value="0">
+                        <label style="display:block;font-size:12px;font-weight:bold;">Scholarship:</label>
+                        <input type="number" name="scholarship" class="dash-input" min="0" step="1" value="0">
+                        <button type="submit" class="header-btn" style="border:none;cursor:pointer;">Add Fee</button>
+                    </form>
+                </div>
+                <div style="background:rgba(0,0,0,0.02);border:1px dashed #aaa;padding:15px;border-radius:6px;">
+                    <h5 style="margin-top:0;">2. Add One Fee to All Students</h5>
+                    <form method="POST">
+                        <input type="hidden" name="action" value="add_fee_all">
+                        <label style="display:block;font-size:12px;font-weight:bold;">Class:</label>
+                        <select name="fee_class" class="dash-input">
+                            <option value="">All Classes</option>
+                            ${classOptions}
+                        </select>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Room:</label>
+                        <select name="fee_room" class="dash-input">
+                            <option value="">All Rooms</option>
+                            ${roomOptions}
+                        </select>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Shift:</label>
+                        <select name="fee_shift" class="dash-input">
+                            <option value="">All Shifts</option>
+                            <option value="Day">Day</option>
+                            <option value="Morning">Morning</option>
+                        </select>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Month:</label>
+                        <input type="text" name="month" class="dash-input" placeholder="January, 2026" required>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Fee Amount:</label>
+                        <input type="number" name="payable" class="dash-input" min="0" step="1" required>
+                        <label style="display:block;font-size:12px;font-weight:bold;">Scholarship (optional):</label>
+                        <input type="number" name="scholarship" class="dash-input" min="0" step="1" value="0">
+                        <button type="submit" class="header-btn" style="border:none;cursor:pointer;background:#00796b;" onclick="return confirm('Apply this fee to every registered student?')">Add Fee to Everyone</button>
+                    </form>
+                </div>
             </div>
-            <p style="font-size:12px;color:#555;margin:0 0 10px;">নাম, User ID, Password, Roll, Class, Room এবং Student ID # সরাসরি এই table-এ edit করে <b>Update</b> চাপতে পারবে।</p>
-            <table class="dash-table">
-                <tr>
-                    <th style="width:40px;text-align:center;"><input type="checkbox" id="select_all_students" onclick="toggleAllCheckboxes(this, 'selected_students')"></th>
-                    <th>User ID</th><th>Password</th><th>Roll</th><th>Name</th><th>Class</th><th>Room</th><th>Student ID #</th><th>Action</th>
-                </tr>
-                ${studentsRows}
-            </table>
-            <form id="deleteSelectedForm" method="POST" style="display:none;"><input type="hidden" name="action" value="delete_selected_students"><div id="deleteSelectedInputs"></div></form>
+            <div style="margin-top:20px;overflow-x:auto;">
+                <h5 style="margin:0 0 8px;">3. Fee Records — Search / Remove</h5>
+                <input id="fee_record_search" type="text" class="dash-input" placeholder="Search User ID / Student ID / Name / Month" oninput="filterFeeRecords(this.value)">
+                <table class="dash-table">
+                    <tr><th>SI</th><th>User ID</th><th>Student Name</th><th>Month</th><th>Payable</th><th>Paid</th><th>Scholarship</th><th>Due</th><th>Action</th></tr>
+                    ${tuition_fees.length ? tuition_fees.slice().reverse().map((fee, idx) => {
+                        const st = students_list.find(s => s.id === fee.student_id);
+                        const studentName = st ? st.name : 'Unknown';
+                        return `<tr class="fee-record-row" data-search="${String(fee.student_id + ' ' + (st ? st.student_no : '') + ' ' + studentName + ' ' + fee.month).toLowerCase()}">
+                            <td>${idx + 1}</td><td>${fee.student_id}</td><td>${studentName}</td><td>${fee.month}</td>
+                            <td>${feeNumber(fee.payable).toFixed(0)}</td><td>${feeNumber(fee.paid).toFixed(0)}</td>
+                            <td>${feeNumber(fee.scholarship).toFixed(0)}</td><td style="color:${feeDue(fee)>0?'#d00':'#16853a'};font-weight:bold;">${feeDue(fee).toFixed(0)}</td>
+                            <td><form method="POST" style="margin:0;"><input type="hidden" name="action" value="delete_fee"><input type="hidden" name="fee_id" value="${fee.id}"><button type="submit" class="del-btn" onclick="return confirm('Delete this fee record?')">Delete</button></form></td>
+                        </tr>`;
+                    }).join('') : '<tr><td colspan="9" style="text-align:center;color:#666;">No fee records yet.</td></tr>'}
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <form method="POST">
+                <input type="hidden" name="action" value="delete_selected_students">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h4 style="color:#111111; margin:0;">5. Registered Students List</h4>
+                    <button type="submit" class="del-btn" onclick="return confirm('Delete selected students?')">🗑 Delete Selected</button>
+                </div>
+                <table class="dash-table">
+                    <tr>
+                        <th style="width: 40px; text-align: center;"><input type="checkbox" id="select_all_students" onclick="toggleAllCheckboxes(this, 'selected_students')"></th>
+                        <th>User ID</th><th>Password</th><th>Roll</th><th>Name</th><th>Class</th><th>Room</th><th>Student ID #</th><th>Action</th>
+                    </tr>
+                    ${studentsRows}
+                </table>
+            </form>
         </div>
     </div>
     <script>
+        function filterFeeStudents(q) {
+            q = (q || '').toLowerCase();
+            const select = document.getElementById('fee_student_select');
+            if (!select) return;
+            Array.from(select.options).forEach(opt => {
+                opt.hidden = q && opt.textContent.toLowerCase().indexOf(q) === -1;
+            });
+        }
+        function filterFeeRecords(q) {
+            q = (q || '').toLowerCase();
+            document.querySelectorAll('.fee-record-row').forEach(row => {
+                row.style.display = !q || row.getAttribute('data-search').indexOf(q) !== -1 ? '' : 'none';
+            });
+        }
+
         function toggleAllCheckboxes(source, checkboxName) {
             let checkboxes = document.getElementsByName(checkboxName);
             for(let i=0, n=checkboxes.length; i<n; i++) checkboxes[i].checked = source.checked;
-        }
-        function syncStudentEdit(button) {
-            const row = button.closest('tr');
-            const form = button.closest('form');
-            const names = ['new_id','new_pass','new_roll','new_name','new_class','new_room','new_student_no'];
-            names.forEach(name => { const source = row.querySelector('[name="' + name + '"]'); const target = form.querySelector('.mirror-' + name.replace('new_','new-')); if(source && target) target.value = source.value; });
-            return true;
-        }
-        function deleteSelectedStudents() {
-            const selected = Array.from(document.querySelectorAll('input[name="selected_students"]:checked')).map(x => x.value);
-            if (!selected.length) { alert('কমপক্ষে একজন student select করুন।'); return; }
-            if (!confirm('Selected students delete করবেন?')) return;
-            const box = document.getElementById('deleteSelectedInputs');
-            box.innerHTML = '';
-            selected.forEach(v => { const input = document.createElement('input'); input.type='hidden'; input.name='selected_students'; input.value=v; box.appendChild(input); });
-            document.getElementById('deleteSelectedForm').submit();
         }
     </script>`;
     res.send(renderTemplate(body, req));
@@ -1481,6 +2274,7 @@ app.post('/dashboard', (req, res) => {
             active_exam_id = exam.id;
             exam_state[exam.id].active = true;
             exam_state[exam.id].startedAt = new Date().toISOString();
+            savePortalData();
             successMsg = `${exam.title} started successfully. Admit Card and Marks Upload are now switched to this exam.`;
         }
     } else if (action === 'stop_exam') {
@@ -1488,6 +2282,7 @@ app.post('/dashboard', (req, res) => {
         if (exam) {
             exam_state[exam.id].active = false;
             if (active_exam_id === exam.id) active_exam_id = null;
+            savePortalData();
             successMsg = `${exam.title} stopped successfully.`;
         }
     } else if (action === 'publish_exam') {
@@ -1495,6 +2290,7 @@ app.post('/dashboard', (req, res) => {
         if (exam) {
             exam_state[exam.id].published = true;
             exam_state[exam.id].publishedAt = new Date().toISOString();
+            savePortalData();
             successMsg = `${exam.title} result published successfully.`;
         }
     } else if (action === 'unpublish_exam') {
@@ -1502,6 +2298,7 @@ app.post('/dashboard', (req, res) => {
         if (exam) {
             exam_state[exam.id].published = false;
             exam_state[exam.id].publishedAt = null;
+            savePortalData();
             successMsg = `${exam.title} result unpublished.`;
         }
     } else if (action === 'update_settings') {
@@ -1554,92 +2351,28 @@ app.post('/dashboard', (req, res) => {
         let nId = parseInt(req.body.notice_id);
         notice_board = notice_board.filter(n => n.id !== nId);
         successMsg = 'নোটিশ ডিলিট করা হয়েছে!';
-    } else if (action === 'bulk_add_students') {
-        const bulkName = String(req.body.bulk_name || '').trim();
-        const bulkClass = req.body.bulk_class || 'Class 6';
-        const bulkRoom = req.body.bulk_room || 'Room 1';
-        const bulkIdStart = parseInt(req.body.bulk_id_start, 10);
-        const bulkIdEnd = parseInt(req.body.bulk_id_end, 10);
-        const bulkRollStart = parseInt(req.body.bulk_roll_start, 10);
-        const bulkRollEnd = parseInt(req.body.bulk_roll_end, 10);
-        const idCount = bulkIdEnd - bulkIdStart + 1;
-        const rollCount = bulkRollEnd - bulkRollStart + 1;
-        let created = 0;
-        let skipped = 0;
-
-        if (!bulkName) {
-            successMsg = 'Student name is required!';
-        } else if (
-            !Number.isInteger(bulkIdStart) || !Number.isInteger(bulkIdEnd) ||
-            !Number.isInteger(bulkRollStart) || !Number.isInteger(bulkRollEnd) ||
-            bulkIdStart < 1 || bulkIdEnd < bulkIdStart ||
-            bulkRollStart < 1 || bulkRollEnd < bulkRollStart ||
-            idCount !== rollCount || idCount > 501
-        ) {
-            successMsg = 'Valid User ID Start/End এবং Roll Start/End দিন। User ID range এবং Roll range-এর student সংখ্যা একই হতে হবে (সর্বোচ্চ 501 জন)।';
-        } else {
-            for (let i = 0; i < idCount; i++) {
-                const id = String(bulkIdStart + i);
-                const roll = String(bulkRollStart + i);
-                const exists = students_list.some(st =>
-                    String(st.id) === id ||
-                    String(st.student_no) === id ||
-                    String(st.roll) === roll
-                );
-
-                if (exists) {
-                    skipped++;
-                    continue;
-                }
-
-                students_list.push({
-                    id,
-                    pass: id,
-                    roll,
-                    name: bulkName,
-                    class: bulkClass,
-                    room: bulkRoom,
-                    student_no: id,
-                    photo: ''
-                });
-                created++;
-            }
-
-            successMsg = `${created}টি student account তৈরি হয়েছে (User ID ${bulkIdStart}-${bulkIdEnd}, Roll ${bulkRollStart}-${bulkRollEnd}).${skipped ? ` ${skipped}টি আগে থেকেই ছিল, তাই বাদ দেওয়া হয়েছে।` : ''} Password User ID-এর মতোই সেট হয়েছে।`;
-        }
     } else if (action === 'add_student') {
         students_list.push({
             id: req.body.student_id,
-            pass: req.body.student_id,
+            pass: req.body.student_pass,
             roll: req.body.roll,
             name: req.body.name,
             class: req.body.class || 'Class 6',
             room: req.body.room,
+            shift: req.body.shift || 'Day',
             student_no: req.body.student_no,
             photo: req.body.photo || ''
         });
         successMsg = 'Student added successfully!';
     } else if (action === 'update_student_full') {
-        const targetId = String(req.body.target_student_id || '');
-        const s = students_list.find(st => String(st.id) === targetId);
-        const newId = String(req.body.new_id || '').trim();
-        const newPass = newId;
-        const newRoll = String(req.body.new_roll || '').trim();
-        const newName = String(req.body.new_name || '').trim();
-        const newStudentNo = String(req.body.new_student_no || '').trim();
-        if (!s) {
-            successMsg = 'Student not found!';
-        } else if (!newId || !newPass || !newRoll || !newName || !newStudentNo) {
-            successMsg = 'All student fields are required!';
-        } else {
-            const duplicate = students_list.some(st => st !== s && (String(st.id) === newId || String(st.student_no) === newStudentNo || String(st.roll) === newRoll));
-            if (duplicate) {
-                successMsg = 'User ID, Student ID or Roll already exists!';
-            } else {
-                s.id = newId; s.pass = newPass; s.roll = newRoll; s.name = newName;
-                s.class = req.body.new_class || s.class; s.room = req.body.new_room || s.room; s.student_no = newStudentNo;
-                successMsg = 'Student details updated successfully!';
-            }
+        let s = students_list.find(st => st.roll === req.body.target_roll);
+        if (s) {
+            s.name = req.body.new_name;
+            s.roll = req.body.new_roll;
+            s.id = req.body.new_id;
+            s.pass = req.body.new_pass;
+            s.room = req.body.new_room;
+            successMsg = 'Student details updated!';
         }
     } else if (action === 'delete_student') {
         students_list = students_list.filter(s => s.roll !== req.body.target_roll);
@@ -1649,15 +2382,75 @@ app.post('/dashboard', (req, res) => {
         if (!Array.isArray(selected)) selected = [selected];
         students_list = students_list.filter(s => !selected.includes(s.roll));
         successMsg = 'Selected students deleted!';
+    } else if (action === 'add_student_fee') {
+        const st = students_list.find(s => s.id === req.body.student_id);
+        if (st) {
+            tuition_fees.push({
+                id: 'fee_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                student_id: st.id,
+                student_no: st.student_no,
+                month: String(req.body.month || '').trim(),
+                payable: feeNumber(req.body.payable),
+                paid: Math.min(feeNumber(req.body.paid), feeNumber(req.body.payable)),
+                scholarship: Math.min(feeNumber(req.body.scholarship), feeNumber(req.body.payable)),
+                created_at: new Date().toISOString()
+            });
+            savePortalData();
+            successMsg = `Tuition fee added for ${st.name}.`;
+        } else {
+            successMsg = 'Student not found.';
+        }
+    } else if (action === 'add_fee_all') {
+        const payable = feeNumber(req.body.payable);
+        const scholarship = Math.min(feeNumber(req.body.scholarship), payable);
+        const month = String(req.body.month || '').trim();
+        if (students_list.length === 0) {
+            successMsg = 'No registered students found.';
+        } else if (!month || payable <= 0) {
+            successMsg = 'Enter a valid month and fee amount.';
+        } else {
+            const feeClass = String(req.body.fee_class || '').trim();
+        const feeRoom = String(req.body.fee_room || '').trim();
+        const feeShift = String(req.body.fee_shift || '').trim();
+        const targetStudents = students_list.filter(st =>
+            (!feeClass || String(st.class || '') === feeClass) &&
+            (!feeRoom || String(st.room || '') === feeRoom) &&
+            (!feeShift || String(st.shift || 'Day') === feeShift)
+        );
+        targetStudents.forEach(st => {
+                tuition_fees.push({
+                    id: 'fee_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                    student_id: st.id,
+                    student_no: st.student_no,
+                    month,
+                    payable,
+                    paid: 0,
+                    scholarship,
+                    created_at: new Date().toISOString()
+                });
+            });
+            savePortalData();
+            successMsg = `Fee of Tk. ${payable.toFixed(0)} added for all ${students_list.length} students.`;
+        }
+    } else if (action === 'delete_fee') {
+        tuition_fees = tuition_fees.filter(f => f.id !== req.body.fee_id);
+        savePortalData();
+        successMsg = 'Tuition fee record deleted.';
+
     } else if (action === 'add_teacher') {
+        let teacherSubjects = [req.body.teacher_subject1, req.body.teacher_subject2, req.body.teacher_subject3]
+            .map(s => String(s || '').trim()).filter(Boolean);
+        teacherSubjects = [...new Set(teacherSubjects)].slice(0, 3);
+
         teachers_list.push({
             id: req.body.teacher_id,
             pass: req.body.teacher_pass,
             name: req.body.teacher_name,
             phone: req.body.teacher_phone,
-            subject: req.body.teacher_subject
+            subjects: teacherSubjects,
+            subject: teacherSubjects.join(', ')
         });
-        successMsg = 'Teacher account created!';
+        successMsg = `Teacher account created with ${teacherSubjects.length} subject${teacherSubjects.length === 1 ? '' : 's'}!`;
     } else if (action === 'delete_teacher') {
         teachers_list = teachers_list.filter(t => t.id !== req.body.teacher_id);
         successMsg = 'Teacher deleted!';
@@ -1679,8 +2472,16 @@ app.post('/dashboard', (req, res) => {
         let sub = subjects_list.find(s => s.sl === req.body.sub_sl);
         let teacher = teachers_list.find(t => t.id === req.body.teacher_id_select);
         if (sub) {
+            const oldName = sub.name;
             sub.name = req.body.new_sub_name;
-            if (teacher) sub.teacher = `${teacher.name}\n${teacher.phone}`;
+            if (teacher) {
+                normalizeTeacherSubjects(teacher);
+                if (!teacher.subjects.includes(sub.name) && teacher.subjects.length < 3) {
+                    teacher.subjects.push(sub.name);
+                    normalizeTeacherSubjects(teacher);
+                }
+                sub.teacher = `${teacher.name}\n${teacher.phone}`;
+            }
             successMsg = 'Subject updated!';
         }
     } else if (action === 'delete_subject_teacher') {
@@ -1695,6 +2496,7 @@ app.post('/dashboard', (req, res) => {
         successMsg = 'Selected subjects deleted!';
     }
 
+    savePortalData();
     res.redirect(`/dashboard?msg=${encodeURIComponent(successMsg)}&ai_response=${encodeURIComponent(aiResponse)}`);
 });
 
@@ -1704,6 +2506,9 @@ app.get('/logout', (req, res) => {
     });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, () => {
+    console.log("==================================================");
+    console.log("  Dev.Center Software by NIGHT CLOUD Running!     ");
+    console.log("  Node.js Server URL: http://127.0.0.1:" + PORT + "  ");
+    console.log("==================================================");
 });
