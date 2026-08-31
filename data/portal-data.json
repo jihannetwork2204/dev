@@ -5,7 +5,454 @@
       "pass": "8020100",
       "roll": "",
       "name": "1",
+      "class": "Class 6",{
+  "students_list": [
+    {
+      "id": "8020100",
+      "pass": "8020100",
+      "roll": "",
+      "name": "1",
       "class": "Class 6",
+      "room": "Room 1",
+      "student_no": "8020100",
+      "photo": "",
+      "shift": "Day",
+      "gender": "",
+      "religion": "Islam"
+    },
+    {
+      "id": "205081",
+      "pass": "205081",
+      "roll": "02",
+      "name": "Ismam",
+      "class": "Class 6",
+      "room": "Room 7",
+      "student_no": "8020100",
+      "photo": "",
+      "religion": "Islam"
+    }
+  ],
+  "teachers_list": [
+    {
+      "id": "201702",
+      "pass": "01346782898",
+      "name": "আল-আমিন",
+      "phone": "01346782898",
+      "subject": "Mathematics",
+      "subjects": [
+        "Mathematics"
+      ]
+    },
+    {
+      "id": "201703",
+      "pass": "01740452930",
+      "name": "মুজিব",
+      "phone": "01740452930",
+      "subject": "Mathematics",
+      "subjects": [
+        "Mathematics"
+      ]
+    },
+    {
+      "id": "201704",
+      "pass": "01778467114",
+      "name": "সজিব আহমেদ",
+      "phone": "01778467114",
+      "subject": "SCIENCE",
+      "subjects": [
+        "SCIENCE"
+      ]
+    },
+    {
+      "id": "201705",
+      "pass": "01729388575",
+      "name": "সাবির হুমায়ুন",
+      "phone": "01729388575",
+      "subject": "ICT, Bangladesh and Global Studies",
+      "subjects": [
+        "ICT",
+        "Bangladesh and Global Studies"
+      ]
+    },
+    {
+      "id": "201706",
+      "pass": "01786196439",
+      "name": "আদি মাহাতার",
+      "phone": "01786196439",
+      "subject": "SCIENCE",
+      "subjects": [
+        "SCIENCE"
+      ]
+    },
+    {
+      "id": "201707",
+      "pass": "01521568096",
+      "name": "হাবিবুর",
+      "phone": "01521568096",
+      "subject": "SCIENCE",
+      "subjects": [
+        "SCIENCE"
+      ]
+    },
+    {
+      "id": "201708",
+      "pass": "01626827213",
+      "name": "রিজওয়ান",
+      "phone": "01626827213",
+      "subject": "Bangladesh and Global Studies",
+      "subjects": [
+        "Bangladesh and Global Studies"
+      ]
+    },
+    {
+      "id": "201709",
+      "pass": "01647149815",
+      "name": "মুজাহিদ",
+      "phone": "01647149815",
+      "subject": "Islam and Moral Education",
+      "subjects": [
+        "Islam and Moral Education"
+      ]
+    },
+    {
+      "id": "201710",
+      "pass": "01689413121",
+      "name": "জামিউল সাজ্জাদ",
+      "phone": "01689413121",
+      "subject": "Mathematics",
+      "subjects": [
+        "Mathematics"
+      ]
+    },
+    {
+      "id": "201711",
+      "pass": "01767398054",
+      "name": "আমিরুল ইসলাম",
+      "phone": "01767398054",
+      "subject": "Mathematics",
+      "subjects": [
+        "Mathematics"
+      ]
+    },
+    {
+      "id": "201712",
+      "pass": "01571085191",
+      "name": "জাহিদুল",
+      "phone": "01571085191",
+      "subject": "Bangla-I",
+      "subjects": [
+        "Bangla-I"
+      ]
+    },
+    {
+      "id": "201713",
+      "pass": "01604104714",
+      "name": "সামিয়া",
+      "phone": "01604104714",
+      "subject": "Islam and Moral Education",
+      "subjects": [
+        "Islam and Moral Education"
+      ]
+    },
+    {
+      "id": "201714",
+      "pass": "01603380691",
+      "name": "হালিমা মনি",
+      "phone": "01603380691",
+      "subject": "Bangladesh and Global Studies",
+      "subjects": [
+        "Bangladesh and Global Studies"
+      ]
+    },
+    {
+      "id": "201715",
+      "pass": "01327058248",
+      "name": "মুনতাহা আক্তার সুমাইয়া",
+      "phone": "01327058248",
+      "subject": "Manager",
+      "subjects": [
+        "Manager"
+      ]
+    },
+    {
+      "id": "201716",
+      "pass": "01970871787",
+      "name": "সিফিল মনি",
+      "phone": "01970871787",
+      "subject": "English-I",
+      "subjects": [
+        "English-I"
+      ]
+    },
+    {
+      "id": "201717",
+      "pass": "01990106502",
+      "name": "জয়া",
+      "phone": "01990106502",
+      "subject": "English-I",
+      "subjects": [
+        "English-I"
+      ]
+    },
+    {
+      "id": "201718",
+      "pass": "01966423607",
+      "name": "আলাপন ভৌমিক",
+      "phone": "01966423607",
+      "subject": "Hindu and Moral Education",
+      "subjects": [
+        "Hindu and Moral Education"
+      ]
+    },
+    {
+      "id": "201719",
+      "pass": "01612936881",
+      "name": "ওমর ফারুক",
+      "phone": "01612936881",
+      "subject": "Office Assistant",
+      "subjects": [
+        "Office Assistant"
+      ]
+    },
+    {
+      "id": "201700",
+      "pass": "01715230226",
+      "name": "নয়ন দেব",
+      "phone": "01715230226",
+      "subjects": [
+        "English-I",
+        "English-II"
+      ],
+      "subject": "English-I, English-II"
+    },
+    {
+      "id": "201701",
+      "pass": "01755086652",
+      "name": "আবু বকর সিদ্দিক",
+      "phone": "01755086652",
+      "subjects": [
+        "Bangla-I",
+        "Bangla-II"
+      ],
+      "subject": "Bangla-I, Bangla-II"
+    }
+  ],
+  "subjects_list": [
+    {
+      "sl": "1",
+      "name": "Bangla-I",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "2",
+      "name": "Bangla-II",
+      "teacher": "AB Siddiq\n01521444634"
+    },
+    {
+      "sl": "3",
+      "name": "English-I",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "4",
+      "name": "English-II",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "5",
+      "name": "Mathematics",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "6",
+      "name": "ICT",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "7",
+      "name": "Islam and Moral Education",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "8",
+      "name": "Bangladesh and Global Studies",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "9",
+      "name": "SCIENCE",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "10",
+      "name": "Fine Arts & Crafts",
+      "teacher": "TBA"
+    },
+    {
+      "sl": "11",
+      "name": "Hindu and Moral Education",
+      "teacher": "TBA"
+    }
+  ],
+  "notice_board": [
+    {
+      "id": 2,
+      "text": "নিয়মিত ক্লাস উপস্থিতি এবং শৃঙ্খলা বজায় রাখার সংক্রান্ত নির্দেশাবলি।"
+    },
+    {
+      "id": 3,
+      "text": "সহ-পাঠ্যক্রম কার্যক্রম এবং সাংস্কৃতিক প্রতিযোগিতার জন্য নিবন্ধন শুরু হয়েছে।"
+    },
+    {
+      "id": 4,
+      "text": "আগামীকাল তোমাদের কোচিং নিয়মিত রুটিন অনুযায়ী চলবে"
+    }
+  ],
+  "exam_state": {
+    "tutorial1": {
+      "active": false,
+      "startedAt": "2026-08-27T01:41:29.182Z",
+      "published": false,
+      "publishedAt": null
+    },
+    "half_yearly": {
+      "active": false,
+      "startedAt": null,
+      "published": false,
+      "publishedAt": null
+    },
+    "tutorial2": {
+      "active": true,
+      "startedAt": "2026-08-27T02:07:42.061Z",
+      "published": true,
+      "publishedAt": "2026-08-28T14:55:38.599Z"
+    },
+    "final": {
+      "active": false,
+      "startedAt": "2026-08-22T10:37:00.164Z",
+      "published": false,
+      "publishedAt": null
+    }
+  },
+  "active_exam_id": "tutorial2",
+  "marks_db": {
+    "tutorial1": {
+      "Room 8": {
+        "SCIENCE": {
+          "1": {
+            "written": 100,
+            "mcq": 50,
+            "total": 150,
+            "grade": "A+"
+          },
+          "2": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "3": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "4": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "5": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "6": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "7": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "8": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "9": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          },
+          "10": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          }
+        }
+      },
+      "Room 1": {
+        "SCIENCE": {
+          "": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          }
+        }
+      }
+    },
+    "tutorial2": {
+      "Room 1": {
+        "SCIENCE": {
+          "": {
+            "written": 0,
+            "mcq": 0,
+            "total": 0,
+            "grade": "F"
+          }
+        },
+        "Bangla-I": {},
+        "Bangla-II": {}
+      },
+      "Room 7": {
+        "Bangla-I": {}
+      }
+    }
+  },
+  "portal_settings": {
+    "school_name": "দেব'স সেন্টার",
+    "tagline": "একটি বাস্তবমুখী ছায়া শিক্ষা প্রতিষ্ঠান",
+    "logo_type": "image",
+    "logo_text": "দেব'স সেন্টার ",
+    "logo_url": "root/dev/public/school-logo.png",
+    "bg_color": "#FAF6F0",
+    "header_color": "#ffffff",
+    "accent_color": "#007bff",
+    "ai_prompt": "তুমি একজন বন্ধুভাবাপন্ন বাংলা এআই সহকারী (AI Assistant), যে একদম মানুষের মতো সাবলীল বাংলায় কথা বলতে পারো। জিয়াননেটওয়ার্ক (JihanNetwork) পোর্টালে আসা ব্যবহারকারীদের সব প্রশ্নের উত্তর বাংলায় সুন্দর করে বুঝিয়ে দেবে।",
+    "home_title": "দেব'স সেন্টারে আপনাকে স্বাগতম",
+    "home_description": "একটি বাস্তবমুখী ছায়া শিক্ষা প্রতিষ্ঠান",
+    "home_feature_title": "একাডেমিক বৈশিষ্ট্য:",
+    "home_feature_1": "৫ম থেকে ৮ম শ্রেণী পর্যন্ত ভর্তির সুবিধা",
+    "home_feature_2": "পরীক্ষায় ভালো করতে দেব'স সেন্টারেই বেস্ট ",
+    "home_feature_3": "মানসম্মত পড়ালেখার নির্ভরযোগ্য প্রতিষ্ঠান ",
+    "contact_address": "অভিযান # ১৪, কাজল ভিলা, সফিউদ্দিন রোড, টঙ্গী, গাজীপুর",
+    "contact_office": "01680-987196",
+    "contact_whatsapp": "01977-230226"
+  },
+  "tuition_fees": [],
+  "uploaded_sheets": []
+}
       "room": "Room 1",
       "student_no": "8020100",
       "photo": "",
