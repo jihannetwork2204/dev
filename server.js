@@ -164,9 +164,10 @@ const DEFAULT_SUBJECTS = [
     {sl: "5", name: "Mathematics", teacher: "TBA"},
     {sl: "6", name: "ICT", teacher: "TBA"},
     {sl: "7", name: "Islam and Moral Education", teacher: "TBA"},
-    {sl: "8", name: "Bangladesh and Global Studies", teacher: "TBA"},
-    {sl: "9", name: "SCIENCE", teacher: "TBA"},
-    {sl: "10", name: "Fine Arts & Crafts", teacher: "TBA"}
+    {sl: "8", name: "Hindu and Moral Education", teacher: "TBA"},
+    {sl: "9", name: "Bangladesh and Global Studies", teacher: "TBA"},
+    {sl: "10", name: "SCIENCE", teacher: "TBA"},
+    {sl: "11", name: "Fine Arts & Crafts", teacher: "TBA"}
 ];
 
 let subjects_list = DEFAULT_SUBJECTS.map(sub => ({ ...sub }));
@@ -229,10 +230,87 @@ function getTeacherSubjects(teacher) {
 }
 
 function normalizeTeacherSubjects(teacher) {
-    const subjects = getTeacherSubjects(teacher).filter((s, i, arr) => arr.indexOf(s) === i).slice(0, 3);
+    const subjects = getTeacherSubjects(teacher)
+        .filter((s, i, arr) => arr.findIndex(x => String(x).toLowerCase() === String(s).toLowerCase()) === i)
+        .sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true }))
+        .slice(0, 3);
     teacher.subjects = subjects;
     teacher.subject = subjects.join(', ');
     return subjects;
+}
+
+// Keep portal lists in a consistent order everywhere:
+// subjects A-Z, teacher accounts by Teacher ID, and students by User ID.
+function portalNaturalCompare(a, b) {
+    return String(a == null ? '' : a).localeCompare(
+        String(b == null ? '' : b),
+        undefined,
+        { numeric: true, sensitivity: 'base' }
+    );
+}
+
+function sortPortalLists() {
+    if (Array.isArray(subjects_list)) {
+        subjects_list.sort((a, b) => portalNaturalCompare(a && a.name, b && b.name));
+        subjects_list.forEach((sub, idx) => sub.sl = String(idx + 1));
+    }
+    if (Array.isArray(teachers_list)) {
+        teachers_list.forEach(normalizeTeacherSubjects);
+        teachers_list.sort((a, b) => portalNaturalCompare(a && a.id, b && b.id));
+    }
+    if (Array.isArray(students_list)) {
+        students_list.sort((a, b) => portalNaturalCompare(a && a.id, b && b.id));
+    }
+}
+
+// Subject ↔ Teacher assignment is automatic.
+// A teacher is shown under every subject in teacher.subjects; multiple teachers can share one subject.
+function syncSubjectTeacherAssignments() {
+    if (!Array.isArray(subjects_list) || !Array.isArray(teachers_list)) return;
+
+    subjects_list.forEach(sub => {
+        const subjectName = String(sub && sub.name || '').trim();
+        const assignedTeachers = teachers_list
+            .filter(t => getTeacherSubjects(t).some(s =>
+                String(s || '').trim().toLowerCase() === subjectName.toLowerCase()
+            ))
+            .sort((a, b) => portalNaturalCompare(a && a.id, b && b.id));
+
+        sub.teacher = assignedTeachers.length
+            ? assignedTeachers.map(t => {
+                const name = String(t.name || t.id || 'Teacher').trim();
+                const phone = String(t.phone || '').trim();
+                return phone ? `${name}\n${phone}` : name;
+            }).join('\n\n')
+            : 'TBA';
+    });
+}
+
+const RELIGION_SUBJECTS = {
+    Islam: 'Islam and Moral Education',
+    Hindu: 'Hindu and Moral Education'
+};
+
+function normalizeStudentReligion(student) {
+    if (!student) return 'Islam';
+    const value = String(student.religion || '').trim().toLowerCase();
+    if (value === 'hindu' || value === 'hindu and moral education') {
+        student.religion = 'Hindu';
+    } else {
+        student.religion = 'Islam';
+    }
+    return student.religion;
+}
+
+function studentHasSubject(student, subjectName) {
+    const name = String(subjectName || '').trim().toLowerCase();
+    if (name === RELIGION_SUBJECTS.Islam.toLowerCase()) return normalizeStudentReligion(student) === 'Islam';
+    if (name === RELIGION_SUBJECTS.Hindu.toLowerCase()) return normalizeStudentReligion(student) === 'Hindu';
+    return true;
+}
+
+function getSubjectsForStudent(student) {
+    return subjects_list.filter(sub => studentHasSubject(student, sub.name));
 }
 
 function formatExamDate(dateValue) {
@@ -281,6 +359,11 @@ function readPortalData() {
 }
 
 function savePortalData() {
+    // Automatic assignment and ordering are applied before every save,
+    // so every page/selector uses the same current data.
+    syncSubjectTeacherAssignments();
+    sortPortalLists();
+
     const payload = {
         students_list,
         teachers_list,
@@ -380,6 +463,23 @@ if (Array.isArray(teachers_list)) {
         sl: String(index + 1)
     }));
 })();
+
+// Ensure both religion subjects exist even when an older portal-data.json is loaded.
+(function ensureReligionSubjects() {
+    if (!Array.isArray(subjects_list)) subjects_list = [];
+    const required = [
+        { name: RELIGION_SUBJECTS.Islam, teacher: 'TBA' },
+        { name: RELIGION_SUBJECTS.Hindu, teacher: 'TBA' }
+    ];
+    required.forEach(item => {
+        const exists = subjects_list.some(sub => String(sub && sub.name || '').trim().toLowerCase() === item.name.toLowerCase());
+        if (!exists) subjects_list.push({ sl: String(subjects_list.length + 1), name: item.name, teacher: item.teacher });
+    });
+    subjects_list.forEach((sub, idx) => sub.sl = String(idx + 1));
+})();
+
+// Normalize religion for existing students. Older records default to Islam for backward compatibility.
+students_list.forEach(normalizeStudentReligion);
 
 // If old tuition_fees.json exists and the single JSON has no fee records yet,
 // migrate it once into portal-data.json. After migration, portal-data.json is
@@ -980,7 +1080,8 @@ app.get('/teacher_portal', (req, res) => {
             .filter(s =>
                 (!selectedClass || String(s.class || '') === String(selectedClass)) &&
                 (!selectedRoom || String(s.room || '') === String(selectedRoom)) &&
-                (!selectedShift || String(s.shift || 'Day') === String(selectedShift))
+                (!selectedShift || String(s.shift || 'Day') === String(selectedShift)) &&
+                studentHasSubject(s, selectedSubject)
             )
             .sort((a, b) => parseInt(a.roll) - parseInt(b.roll));
 
@@ -1131,7 +1232,8 @@ app.post('/teacher_portal/save_marks', (req, res) => {
     let roomStudents = students_list.filter(s =>
         String(s.room || '') === String(room || '') &&
         (!selectedClass || String(s.class || '') === String(selectedClass)) &&
-        (!selectedShift || String(s.shift || 'Day') === String(selectedShift))
+        (!selectedShift || String(s.shift || 'Day') === String(selectedShift)) &&
+        studentHasSubject(s, subject)
     );
     roomStudents.forEach(st => {
         let written = parseFloat(req.body[`marks_${st.roll}_written`]) || 0;
@@ -1302,6 +1404,17 @@ app.get('/student_portal/sheets', (req, res) => {
             </div>`, req));
     }
 
+    const student = students_list.find(s => String(s.id) === String(req.session.student_logged));
+    if (!student) return res.redirect('/logout');
+    if (!studentHasSubject(student, subjectRecord.name)) {
+        return res.status(403).send(renderTemplate(`
+            <div class="main-container" style="max-width:900px;"><div class="card">
+                <h3 style="color:#c62828;">Subject not available for this student</h3>
+                <p>This religion subject is not assigned to your student profile.</p>
+                <a href="/student_portal?tab=subjects" class="header-btn">Back to Subjects</a>
+            </div></div>`, req));
+    }
+
     const subjectSheets = uploaded_sheets.filter(sheet =>
         String(sheet.subject || '').trim().toLowerCase() === String(subjectRecord.name || '').trim().toLowerCase()
     );
@@ -1432,7 +1545,7 @@ app.get('/student_portal', (req, res) => {
             </div>
         </div>`;
     } else if (tab === 'subjects') {
-        let rows = subjects_list.map(sub => {
+        let rows = getSubjectsForStudent(student).map(sub => {
             const subjectSheets = uploaded_sheets.filter(x => String(x.subject).trim().toLowerCase() === String(sub.name).trim().toLowerCase());
             const sheetButtons = subjectSheets.length ? `<a href="/student_portal/sheets?subject=${encodeURIComponent(sub.name)}" class="header-btn" style="display:inline-block;padding:7px 13px;margin:2px 0;background:#00796b;font-size:12px;">📄 View Sheet</a>` : '<span style="color:#999;font-size:12px;">No sheet</span>';
             return `
@@ -1527,7 +1640,7 @@ ${getActiveExam() ? '<a href="/student_portal?tab=admit_card" class="sidebar-ite
         let resultRows = '';
         let totalMarksSum = 0;
         let countSubs = 0;
-        subjects_list.forEach(sub => {
+        getSubjectsForStudent(student).forEach(sub => {
             const m = studentExamMarks[sub.name] && studentExamMarks[sub.name][student.roll] ? studentExamMarks[sub.name][student.roll] : null;
             if (m) { totalMarksSum += Number(m.total) || 0; }
             countSubs++;
@@ -1700,7 +1813,7 @@ app.get('/student_portal/download_result_pdf', (req, res) => {
     let tableRows = '';
     let totalMarksSum = 0;
     let countSubs = 0;
-    subjects_list.forEach(sub => {
+    getSubjectsForStudent(student).forEach(sub => {
         let m = (studentRoomMarks[sub.name] && studentRoomMarks[sub.name][student.roll]) ? studentRoomMarks[sub.name][student.roll] : { written: 0, mcq: 0, total: 0, grade: '-' };
         totalMarksSum += Number(m.total) || 0; countSubs++;
         tableRows += `<tr><td>${sub.name}</td><td style="text-align:center;">${m.written}</td><td style="text-align:center;">${m.mcq}</td><td style="text-align:center;font-weight:bold;">${m.total}</td><td style="text-align:center;font-weight:bold;">${m.grade}</td></tr>`;
@@ -1752,62 +1865,36 @@ app.get('/dashboard', (req, res) => {
     let aiResponse = req.query.ai_response || '';
 
     let presetOptions = Object.keys(PRESET_THEMES).map(key => `<option value="${key}">${PRESET_THEMES[key].name}</option>`).join('');
-    let teacherSelectOptions = teachers_list.length > 0 
-        ? teachers_list.map(t => {
-            const assigned = getTeacherSubjects(t);
-            return `<option value="${t.id}">${t.name} (${assigned.length ? assigned.join(', ') : 'No Subject'}) - Ph: ${t.phone}</option>`;
-        }).join('')
-        : '<option value="">-- No Teachers Available (Create one first) --</option>';
     let studentSelectOptions = students_list.length > 0 
         ? students_list.map(s => `<option value="${s.roll}">Roll: ${s.roll} - ${s.name} (Class: ${s.class})</option>`).join('')
         : '<option value="">-- No Students Available --</option>';
 
-    let teachersRows = teachers_list.length > 0 ? teachers_list.map(t => `
-        <tr>
-            <td style="text-align: center;"><input type="checkbox" name="selected_teachers" value="${t.id}"></td>
-            <td style="font-weight: bold;">${t.id}</td>
-            <td>${t.pass}</td>
-            <td style="font-weight: bold;">${t.name}</td>
-            <td>${t.phone}</td>
-            <td>${getTeacherSubjects(t).join(', ') || 'No Subject'}</td>
-            <td>
+    let teacherSubjectOptions = subjects_list.slice().sort((a,b) => String(a.name||'').localeCompare(String(b.name||''), undefined, { sensitivity:'base' })).map(sub => `<option value="${escapeHtml(sub.name)}">${escapeHtml(sub.name)}</option>`).join('');
+    let teachersRows = teachers_list.length > 0 ? teachers_list.map(t => {
+        const ts = getTeacherSubjects(t);
+        const s1 = ts[0] || '', s2 = ts[1] || '', s3 = ts[2] || '';
+        return `<tr>
+            <td style="text-align:center;"><input type="checkbox" name="selected_teachers" value="${escapeHtml(t.id)}"></td>
+            <td colspan="6">
                 <form method="POST" style="margin:0;">
-                    <input type="hidden" name="action" value="delete_teacher">
-                    <input type="hidden" name="teacher_id" value="${t.id}">
-                    <button type="submit" class="del-btn" onclick="return confirm('Delete this teacher login account?')">Delete</button>
+                    <input type="hidden" name="action" value="update_teacher">
+                    <input type="hidden" name="original_teacher_id" value="${escapeHtml(t.id)}">
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1.3fr 1fr 1fr 1fr 1fr auto auto;gap:8px;align-items:end;">
+                        <div><label style="font-size:11px;font-weight:bold;">Teacher ID</label><input type="text" name="teacher_id" class="dash-input" value="${escapeHtml(t.id)}" required style="margin:0;"></div>
+                        <div><label style="font-size:11px;font-weight:bold;">Password</label><input type="text" name="teacher_pass" class="dash-input" value="${escapeHtml(t.pass)}" required style="margin:0;"></div>
+                        <div><label style="font-size:11px;font-weight:bold;">Full Name</label><input type="text" name="teacher_name" class="dash-input" value="${escapeHtml(t.name)}" required style="margin:0;"></div>
+                        <div><label style="font-size:11px;font-weight:bold;">Phone</label><input type="text" name="teacher_phone" class="dash-input" value="${escapeHtml(t.phone)}" required style="margin:0;"></div>
+                        <div><label style="font-size:11px;font-weight:bold;">Subject 1</label><select name="teacher_subject1" class="dash-input" style="margin:0;"><option value="">-- No Subject --</option>${teacherSubjectOptions.replace(`value="${escapeHtml(s1)}"`, `value="${escapeHtml(s1)}" selected`)}</select></div>
+                        <div><label style="font-size:11px;font-weight:bold;">Subject 2</label><select name="teacher_subject2" class="dash-input" style="margin:0;"><option value="">-- No Subject --</option>${teacherSubjectOptions.replace(`value="${escapeHtml(s2)}"`, `value="${escapeHtml(s2)}" selected`)}</select></div>
+                        <div><label style="font-size:11px;font-weight:bold;">Subject 3</label><select name="teacher_subject3" class="dash-input" style="margin:0;"><option value="">-- No Subject --</option>${teacherSubjectOptions.replace(`value="${escapeHtml(s3)}"`, `value="${escapeHtml(s3)}" selected`)}</select></div>
+                        <button type="submit" class="header-btn" style="border:0;cursor:pointer;background:#00796b;">💾 Save</button>
+                        <button type="submit" formmethod="POST" name="action" value="delete_teacher" class="del-btn" onclick="return confirm('Delete this teacher login account?')">Delete</button>
+                    </div>
                 </form>
             </td>
-        </tr>`).join('') : `<tr><td colspan="7" style="text-align:center; color:#555;">No teacher accounts found. Create one below.</td></tr>`;
+        </tr>`;
+    }).join('') : `<tr><td colspan="7" style="text-align:center;color:#555;">No teacher accounts found. Create one below.</td></tr>`;
 
-    let subjectsRows = subjects_list.map(sub => `
-        <tr>
-            <td style="text-align: center;"><input type="checkbox" name="selected_subjects" value="${sub.sl}"></td>
-            <td style="text-align: center; font-weight: bold;">${sub.sl}</td>
-            <td>
-                <form method="POST" style="margin:0; display:inline;">
-                    <input type="hidden" name="action" value="update_subject_teacher">
-                    <input type="hidden" name="sub_sl" value="${sub.sl}">
-                    <input type="text" name="new_sub_name" value="${sub.name}" class="dash-input" style="margin-bottom:0;" required>
-            </td>
-            <td style="white-space: pre-line; font-size: 13px;">${sub.teacher}</td>
-            <td>
-                <select name="teacher_id_select" class="dash-input" style="margin-bottom:0;" required>
-                    <option value="">-- Change Teacher --</option>
-                    ${teachers_list.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
-                </select>
-            </td>
-            <td>
-                <div style="display: flex; gap: 5px;">
-                    <button type="submit" class="header-btn" style="cursor:pointer; border:none; padding: 6px 10px; background-color: #2e7d32;">Update</button>
-                </form>
-                    <form method="POST" style="margin:0;">
-                        <input type="hidden" name="action" value="delete_subject_teacher">
-                        <input type="hidden" name="sub_sl" value="${sub.sl}">
-                        <button type="submit" class="del-btn" onclick="return confirm('Delete this subject & teacher?')">Delete</button>
-                    </form>
-                </div>
-            </td>
-        </tr>`).join('');
 
     let noticeRows = notice_board.map(n => `
         <tr>
@@ -2058,43 +2145,6 @@ app.get('/dashboard', (req, res) => {
 
             <hr style="border-color: #dddddd; margin: 25px 0;">
 
-            <div style="background: rgba(0,0,0,0.02); border: 1px solid #dddddd; padding: 20px; border-radius: 6px; margin-bottom: 25px;">
-                <h4 style="color: #111111; margin-top: 0;">📚 Subject & Teacher Selection & Assignment</h4>
-                <form method="POST" style="margin-bottom: 20px;">
-                    <input type="hidden" name="action" value="add_subject_teacher">
-                    <div class="dashboard-grid" style="margin-bottom: 0;">
-                        <div>
-                            <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Subject Name:</label>
-                            <input type="text" name="sub_name" class="dash-input" placeholder="Type subject name" required>
-                        </div>
-                        <div>
-                            <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Select Teacher:</label>
-                            <select name="teacher_id_select" class="dash-input" required>
-                                ${teacherSelectOptions}
-                            </select>
-                        </div>
-                    </div>
-                    <button type="submit" class="header-btn" style="cursor:pointer; border:none;">Add Subject & Assign Teacher</button>
-                </form>
-
-                <form method="POST">
-                    <input type="hidden" name="action" value="delete_selected_subjects">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <h5 style="color: #111111; margin: 0;">Existing Subjects & Teachers List:</h5>
-                        <button type="submit" class="del-btn" onclick="return confirm('Delete selected subjects?')">🗑 Delete Selected</button>
-                    </div>
-                    <table class="dash-table">
-                        <tr>
-                            <th style="width: 40px; text-align: center;"><input type="checkbox" id="select_all_subjects" onclick="toggleAllCheckboxes(this, 'selected_subjects')"></th>
-                            <th style="width: 40px;">SL</th><th>Subject Name</th><th>Current Assigned Teacher</th><th>Select New Teacher</th><th>Action</th>
-                        </tr>
-                        ${subjectsRows}
-                    </table>
-                </form>
-            </div>
-
-            <hr style="border-color: #dddddd; margin: 25px 0;">
-
             <div class="dashboard-grid">
                 <div>
                     <h4 style="color:#111111;">3. Add New Student</h4>
@@ -2116,6 +2166,11 @@ app.get('/dashboard', (req, res) => {
                         <select name="shift" class="dash-input" required>
                             <option value="Day">Day</option>
                             <option value="Morning">Morning</option>
+                        </select>
+                        <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Religion:</label>
+                        <select name="religion" class="dash-input" required>
+                            <option value="Islam">Islam and Moral Education</option>
+                            <option value="Hindu">Hindu and Moral Education</option>
                         </select>
                         <label style="display:block; margin-bottom:6px; font-size:12px; color:#111111;">Student ID No:</label>
                         <input type="text" name="student_no" class="dash-input" placeholder="2620600196" required>
@@ -2360,6 +2415,7 @@ app.post('/dashboard', (req, res) => {
             class: req.body.class || 'Class 6',
             room: req.body.room,
             shift: req.body.shift || 'Day',
+            religion: String(req.body.religion || 'Islam').trim() === 'Hindu' ? 'Hindu' : 'Islam',
             student_no: req.body.student_no,
             photo: req.body.photo || ''
         });
@@ -2451,6 +2507,34 @@ app.post('/dashboard', (req, res) => {
             subject: teacherSubjects.join(', ')
         });
         successMsg = `Teacher account created with ${teacherSubjects.length} subject${teacherSubjects.length === 1 ? '' : 's'}!`;
+    } else if (action === 'update_teacher') {
+        const originalId = String(req.body.original_teacher_id || '').trim();
+        const newId = String(req.body.teacher_id || '').trim();
+        const newPass = String(req.body.teacher_pass || '').trim();
+        const newName = String(req.body.teacher_name || '').trim();
+        const newPhone = String(req.body.teacher_phone || '').trim();
+        let teacherSubjects = [req.body.teacher_subject1, req.body.teacher_subject2, req.body.teacher_subject3]
+            .map(s => String(s || '').trim()).filter(Boolean);
+        teacherSubjects = [...new Set(teacherSubjects)].slice(0, 3);
+        const teacher = teachers_list.find(t => String(t.id) === originalId);
+        if (!teacher) {
+            successMsg = 'Teacher not found.';
+        } else if (!newId || !newPass || !newName || !newPhone) {
+            successMsg = 'Teacher ID, password, name and phone are required.';
+        } else if (newId !== originalId && teachers_list.some(t => String(t.id) === newId)) {
+            successMsg = 'This Teacher ID is already in use.';
+        } else {
+            teacher.id = newId;
+            teacher.pass = newPass;
+            teacher.name = newName;
+            teacher.phone = newPhone;
+            teacher.subjects = teacherSubjects;
+            teacher.subject = teacherSubjects.join(', ');
+            if (Array.isArray(uploaded_sheets)) {
+                uploaded_sheets.forEach(sheet => { if (String(sheet.teacher_id) === originalId) sheet.teacher_id = newId; });
+            }
+            successMsg = 'Teacher information updated successfully.';
+        }
     } else if (action === 'delete_teacher') {
         teachers_list = teachers_list.filter(t => t.id !== req.body.teacher_id);
         successMsg = 'Teacher deleted!';
@@ -2459,41 +2543,6 @@ app.post('/dashboard', (req, res) => {
         if (!Array.isArray(selected)) selected = [selected];
         teachers_list = teachers_list.filter(t => !selected.includes(t.id));
         successMsg = 'Selected teachers deleted!';
-    } else if (action === 'add_subject_teacher') {
-        let teacher = teachers_list.find(t => t.id === req.body.teacher_id_select);
-        let teacherInfo = teacher ? `${teacher.name}\n${teacher.phone}` : 'TBA';
-        subjects_list.push({
-            sl: String(subjects_list.length + 1),
-            name: req.body.sub_name,
-            teacher: teacherInfo
-        });
-        successMsg = 'Subject added!';
-    } else if (action === 'update_subject_teacher') {
-        let sub = subjects_list.find(s => s.sl === req.body.sub_sl);
-        let teacher = teachers_list.find(t => t.id === req.body.teacher_id_select);
-        if (sub) {
-            const oldName = sub.name;
-            sub.name = req.body.new_sub_name;
-            if (teacher) {
-                normalizeTeacherSubjects(teacher);
-                if (!teacher.subjects.includes(sub.name) && teacher.subjects.length < 3) {
-                    teacher.subjects.push(sub.name);
-                    normalizeTeacherSubjects(teacher);
-                }
-                sub.teacher = `${teacher.name}\n${teacher.phone}`;
-            }
-            successMsg = 'Subject updated!';
-        }
-    } else if (action === 'delete_subject_teacher') {
-        subjects_list = subjects_list.filter(s => s.sl !== req.body.sub_sl);
-        subjects_list.forEach((s, idx) => s.sl = String(idx + 1));
-        successMsg = 'Subject deleted!';
-    } else if (action === 'delete_selected_subjects') {
-        let selected = req.body.selected_subjects || [];
-        if (!Array.isArray(selected)) selected = [selected];
-        subjects_list = subjects_list.filter(s => !selected.includes(s.sl));
-        subjects_list.forEach((s, idx) => s.sl = String(idx + 1));
-        successMsg = 'Selected subjects deleted!';
     }
 
     savePortalData();
